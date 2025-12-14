@@ -8,7 +8,9 @@
       "Bash(then echo \"exists\")",
       "Bash(else echo \"not found\")",
       "Bash(fi)",
-      "Bash(del appfavicon.ico)"
+      "Bash(del appfavicon.ico)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)"
     ]
   }
 }
