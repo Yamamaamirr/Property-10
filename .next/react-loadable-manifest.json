@@ -1,4 +1,11 @@
 {
+  "app\\components\\map\\FloridaMapWrapper.tsx -> ./FloridaMap": {
+    "id": "app\\components\\map\\FloridaMapWrapper.tsx -> ./FloridaMap",
+    "files": [
+      "static/css/_app-pages-browser_app_components_map_FloridaMap_tsx.css",
+      "static/chunks/_app-pages-browser_app_components_map_FloridaMap_tsx.js"
+    ]
+  },
   "node_modules\\next\\dist\\client\\dev\\hot-reloader\\app\\use-websocket.js -> @vercel/turbopack-ecmascript-runtime/browser/dev/hmr-client/hmr-client.ts": {
     "id": "node_modules\\next\\dist\\client\\dev\\hot-reloader\\app\\use-websocket.js -> @vercel/turbopack-ecmascript-runtime/browser/dev/hmr-client/hmr-client.ts",
     "files": [

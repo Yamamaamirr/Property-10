@@ -1,7 +1,7 @@
 "use client";
 
-import FloridaMap from "./components/FloridaMap";
+import FloridaMapWrapper from "./components/map/FloridaMapWrapper";
 
 export default function Home() {
-  return <FloridaMap />;
+  return <FloridaMapWrapper />;
 }
