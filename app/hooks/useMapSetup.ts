@@ -8,7 +8,9 @@ import {
   MAP_COLORS,
   MAP_OPACITY,
   MAP_LINE_WIDTH,
-  MAP_OFFSETS
+  MAP_OFFSETS,
+  MARKER_CONFIG,
+  MARKER_COLORS
 } from '../lib/constants';
 import {
   extractFloridaCoordinates,
@@ -18,6 +20,8 @@ import {
 
 interface UseMapSetupProps {
   locations: PropertyLocation[];
+  selectedPropertyIndex: number | null;
+  onPropertySelect: (index: number | null) => void;
   onError?: (error: Error) => void;
 }
 
@@ -26,24 +30,69 @@ interface UseMapSetupReturn {
   map: React.RefObject<maplibregl.Map | null>;
   isLoading: boolean;
   error: Error | null;
+  flyToProperty: (index: number) => void;
 }
 
 /**
  * Custom hook to handle all map initialization and setup logic
  * Includes proper cleanup and error handling
  */
-export function useMapSetup({ locations, onError }: UseMapSetupProps): UseMapSetupReturn {
+export function useMapSetup({ locations, selectedPropertyIndex, onPropertySelect, onError }: UseMapSetupProps): UseMapSetupReturn {
   const mapContainer = useRef<HTMLDivElement>(null!);
   const map = useRef<maplibregl.Map | null>(null);
   const isInitialized = useRef(false);
+  const markersReady = useRef(false);
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+
+  // Fly to a specific property
+  const flyToProperty = useCallback((index: number) => {
+    if (!map.current || !locations[index]) return;
+
+    const property = locations[index];
+    map.current.flyTo({
+      center: property.coordinates,
+      zoom: MARKER_CONFIG.FLY_TO_ZOOM,
+      duration: MARKER_CONFIG.FLY_TO_DURATION,
+      curve: MARKER_CONFIG.FLY_TO_CURVE,
+      essential: true
+    });
+  }, [locations]);
 
   // Debug logging for loading state changes
   useEffect(() => {
     console.log('[MAP STATE] isLoading changed to:', isLoading);
   }, [isLoading]);
+
+  // Update marker selection state when selectedPropertyIndex changes
+  useEffect(() => {
+    if (!map.current || !markersReady.current) return;
+
+    // Create the updated GeoJSON with selection state
+    const geojsonData: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: locations.map((loc, index) => ({
+        type: 'Feature' as const,
+        properties: {
+          index,
+          name: loc.name,
+          title: loc.title,
+          isSelected: index === selectedPropertyIndex
+        },
+        geometry: {
+          type: 'Point' as const,
+          coordinates: loc.coordinates
+        }
+      }))
+    };
+
+    // Update the source data
+    const source = map.current.getSource('property-markers') as maplibregl.GeoJSONSource;
+    if (source) {
+      source.setData(geojsonData);
+    }
+  }, [selectedPropertyIndex, locations]);
 
   useEffect(() => {
     // Prevent double initialization (React Strict Mode)
@@ -206,12 +255,143 @@ export function useMapSetup({ locations, onError }: UseMapSetupProps): UseMapSet
                 data: floridaBoundary
               },
               paint: {
-                'line-color': MAP_COLORS.DARK_BACKGROUND,
+                'line-color': MAP_COLORS.OUTLINE_CORE,
                 'line-width': MAP_LINE_WIDTH.OUTLINE_MAIN,
                 'line-opacity': MAP_OPACITY.OUTLINE_MAIN
               }
             });
             console.log('[MAP] ✓ Added florida-outline layer');
+
+            // Create GeoJSON for property markers
+            const markersGeoJSON: GeoJSON.FeatureCollection = {
+              type: 'FeatureCollection',
+              features: locations.map((loc, index) => ({
+                type: 'Feature' as const,
+                properties: {
+                  index,
+                  name: loc.name,
+                  title: loc.title,
+                  isSelected: false
+                },
+                geometry: {
+                  type: 'Point' as const,
+                  coordinates: loc.coordinates
+                }
+              }))
+            };
+
+            // Add markers source
+            map.current.addSource('property-markers', {
+              type: 'geojson',
+              data: markersGeoJSON
+            });
+
+            // Add outer glow layer (renders behind)
+            map.current.addLayer({
+              id: 'markers-glow',
+              type: 'circle',
+              source: 'property-markers',
+              paint: {
+                'circle-radius': [
+                  'case',
+                  ['get', 'isSelected'],
+                  MARKER_CONFIG.OUTER_RING_RADIUS_SELECTED,
+                  MARKER_CONFIG.OUTER_RING_RADIUS
+                ],
+                'circle-color': [
+                  'case',
+                  ['get', 'isSelected'],
+                  MARKER_COLORS.SELECTED_GLOW,
+                  MARKER_COLORS.GLOW
+                ],
+                'circle-opacity': [
+                  'case',
+                  ['get', 'isSelected'],
+                  MARKER_COLORS.SELECTED_GLOW_OPACITY,
+                  MARKER_COLORS.GLOW_OPACITY
+                ],
+                'circle-blur': 0.8
+              }
+            });
+
+            // Add main marker circles
+            map.current.addLayer({
+              id: 'markers-main',
+              type: 'circle',
+              source: 'property-markers',
+              paint: {
+                'circle-radius': [
+                  'case',
+                  ['get', 'isSelected'],
+                  MARKER_CONFIG.RADIUS_SELECTED,
+                  MARKER_CONFIG.RADIUS
+                ],
+                'circle-color': [
+                  'case',
+                  ['get', 'isSelected'],
+                  MARKER_COLORS.SELECTED_FILL,
+                  MARKER_COLORS.FILL
+                ],
+                'circle-opacity': [
+                  'case',
+                  ['get', 'isSelected'],
+                  MARKER_COLORS.SELECTED_FILL_OPACITY,
+                  MARKER_COLORS.FILL_OPACITY
+                ],
+                'circle-stroke-width': [
+                  'case',
+                  ['get', 'isSelected'],
+                  MARKER_CONFIG.STROKE_WIDTH_SELECTED,
+                  MARKER_CONFIG.STROKE_WIDTH
+                ],
+                'circle-stroke-color': MARKER_COLORS.STROKE,
+                'circle-stroke-opacity': MARKER_COLORS.STROKE_OPACITY
+              }
+            });
+            console.log('[MAP] ✓ Added marker layers');
+
+            // Add click handler for markers
+            map.current.on('click', 'markers-main', (e) => {
+              if (!e.features || e.features.length === 0) return;
+
+              const feature = e.features[0];
+              const index = feature.properties?.index;
+
+              if (typeof index === 'number') {
+                onPropertySelect(index);
+              }
+            });
+
+            // Change cursor on marker hover
+            map.current.on('mouseenter', 'markers-main', () => {
+              if (map.current) {
+                map.current.getCanvas().style.cursor = 'pointer';
+              }
+            });
+
+            map.current.on('mouseleave', 'markers-main', () => {
+              if (map.current) {
+                map.current.getCanvas().style.cursor = '';
+              }
+            });
+
+            // Click on map (not marker) to deselect
+            map.current.on('click', (e) => {
+              if (!map.current) return;
+
+              // Check if click was on a marker
+              const features = map.current.queryRenderedFeatures(e.point, {
+                layers: ['markers-main']
+              });
+
+              // If no marker was clicked, deselect
+              if (features.length === 0) {
+                onPropertySelect(null);
+              }
+            });
+
+            markersReady.current = true;
+            console.log('[MAP] ✓ Marker click handlers added');
 
             // Track when our masking layers are fully rendered
             let layersRendered = false;
@@ -297,7 +477,7 @@ export function useMapSetup({ locations, onError }: UseMapSetupProps): UseMapSet
       // Reset initialization flag so it can reinitialize if needed
       isInitialized.current = false;
     };
-  }, [locations, onError]);
+  }, [locations, onError, onPropertySelect]);
 
-  return { mapContainer, map, isLoading, error };
+  return { mapContainer, map, isLoading, error, flyToProperty };
 }

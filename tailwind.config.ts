@@ -19,9 +19,14 @@ const config: Config = {
         'p10-accent': '#4a9eff',
         'p10-cyan': '#00d4ff',
         'p10-cyan-dark': '#00879f',
+        'p10-delft': '#142f5b',
+        'p10-maya': '#76c8fe',
+        'p10-alice': '#dee9f0',
+        'p10-blue-munsell': '#00879f',
       },
       fontFamily: {
         poppins: ['var(--font-poppins)', 'sans-serif'],
+        'work-sans': ['var(--font-work-sans)', 'sans-serif'],
       },
       backdropBlur: {
         xs: '2px',

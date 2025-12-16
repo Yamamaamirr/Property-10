@@ -16,16 +16,30 @@ import PropertySidebar from '../ui/PropertySidebar';
  */
 export default function FloridaMap() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [selectedPropertyIndex, setSelectedPropertyIndex] = useState<number | null>(null);
 
   // Memoize the error callback to prevent map reinitialization on re-renders
   const handleMapError = useCallback((err: Error) => {
     console.error('Map error:', err);
   }, []);
 
-  const { mapContainer, isLoading, error } = useMapSetup({
+  // Handle property selection from either map or sidebar
+  const handlePropertySelect = useCallback((index: number | null) => {
+    setSelectedPropertyIndex(index);
+  }, []);
+
+  const { mapContainer, isLoading, error, flyToProperty } = useMapSetup({
     locations: propertyLocations,
+    selectedPropertyIndex,
+    onPropertySelect: handlePropertySelect,
     onError: handleMapError
   });
+
+  // Handle property card click - select and fly to property
+  const handlePropertyCardClick = useCallback((index: number) => {
+    setSelectedPropertyIndex(index);
+    flyToProperty(index);
+  }, [flyToProperty]);
 
   // Handle sidebar toggle
   const handleSidebarToggle = useCallback((isOpen: boolean) => {
@@ -58,7 +72,12 @@ export default function FloridaMap() {
       </div>
 
       {/* Left Sidebar - fixed overlay on top of map */}
-      <PropertySidebar isOpen={isSidebarOpen} onToggle={handleSidebarToggle} />
+      <PropertySidebar
+        isOpen={isSidebarOpen}
+        onToggle={handleSidebarToggle}
+        selectedPropertyIndex={selectedPropertyIndex}
+        onPropertySelect={handlePropertyCardClick}
+      />
     </div>
   );
 }

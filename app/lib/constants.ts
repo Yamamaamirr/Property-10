@@ -40,11 +40,12 @@ export const MAP_CONFIG = {
 export const MAP_COLORS = {
   // Background and overlays
   DARK_BACKGROUND: '#0a1132',      // p10-dark
-  FLORIDA_FILL: '#2d5a7b',         // p10-blue-light
+  FLORIDA_FILL: '#163552',         // deeper blue tone
 
   // Border effects
-  OUTLINE_SHADOW: '#0d1228',       // Darker variation
-  OUTLINE_HIGHLIGHT: '#2a3d6e',    // Lighter variation
+  OUTLINE_SHADOW: '#0a1f35',       // deepened shadow for contrast
+  OUTLINE_HIGHLIGHT: '#76c8fe',    // p10-maya
+  OUTLINE_CORE: '#005a71',         // deeper blue-munsell tone
 
   // Text and UI
   TEXT_COLOR: '#ffffff',           // white
@@ -53,7 +54,7 @@ export const MAP_COLORS = {
 
   // Pin colors
   PIN_GRADIENT_START: '#00d4ff',   // p10-cyan
-  PIN_GRADIENT_END: '#00879f',     // p10-cyan-dark
+  PIN_GRADIENT_END: '#00879f',     // p10-blue-munsell
   PIN_PULSE: '#00d4ff',           // p10-cyan
 } as const;
 
@@ -64,8 +65,8 @@ export const MAP_OPACITY = {
   DARK_MASK: 0.85,
   FLORIDA_FILL: 0.3,
   OUTLINE_SHADOW: 0.8,
-  OUTLINE_HIGHLIGHT: 0.6,
-  OUTLINE_MAIN: 0.5,
+  OUTLINE_HIGHLIGHT: 0.45,
+  OUTLINE_MAIN: 0.9,
   PIN_GLOW: 0.2,
   PIN_PULSE_START: 0.8,
   PIN_PULSE_END: 0,
@@ -76,8 +77,8 @@ export const MAP_OPACITY = {
  */
 export const MAP_LINE_WIDTH = {
   OUTLINE_SHADOW: 3,
-  OUTLINE_HIGHLIGHT: 2,
-  OUTLINE_MAIN: 1,
+  OUTLINE_HIGHLIGHT: 1.2,
+  OUTLINE_MAIN: 0.65,
   TEXT_HALO: 2,
   PIN_PULSE: 2,
 } as const;
@@ -110,6 +111,54 @@ export const PIN_CONFIG = {
   GLOW_RADIUS: 13,
   INNER_CIRCLE_RADIUS: 7,
   PULSE_RADIUS: 11,
+} as const;
+
+/**
+ * Circular Marker Configuration
+ */
+export const MARKER_CONFIG = {
+  // Base marker size (in pixels at zoom level)
+  RADIUS: 7.5,
+  RADIUS_SELECTED: 10,
+
+  // Stroke widths (alice blue outer ring)
+  STROKE_WIDTH: 3.5,
+  STROKE_WIDTH_SELECTED: 4,
+
+  // Outer glow ring
+  OUTER_RING_RADIUS: 16,
+  OUTER_RING_RADIUS_SELECTED: 20,
+
+  // Animation
+  FLY_TO_ZOOM: 9,
+  FLY_TO_DURATION: 1500,
+  FLY_TO_CURVE: 1.4,
+} as const;
+
+/**
+ * Marker Colors (using p10 palette)
+ */
+export const MARKER_COLORS = {
+  // Default state - blue munsell fill with alice blue border
+  FILL: '#00879f',              // p10-blue-munsell
+  FILL_OPACITY: 1,
+  STROKE: '#dee9f0',            // p10-alice
+  STROKE_OPACITY: 1,
+
+  // Outer glow
+  GLOW: '#00879f',              // p10-blue-munsell
+  GLOW_OPACITY: 0.3,
+
+  // Selected state - same colors, just bigger
+  SELECTED_FILL: '#00879f',      // p10-blue-munsell
+  SELECTED_FILL_OPACITY: 1,
+  SELECTED_STROKE: '#dee9f0',    // p10-alice
+  SELECTED_STROKE_OPACITY: 1,
+  SELECTED_GLOW: '#00879f',      // p10-blue-munsell
+  SELECTED_GLOW_OPACITY: 0.5,
+
+  // Hover state
+  HOVER_FILL: '#00a0bf',         // lighter blue munsell
 } as const;
 
 /**
