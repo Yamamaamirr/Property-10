@@ -777,20 +777,11 @@ video {
 .w-10 {
   width: 2.5rem;
 }
-.w-\[450px\] {
-  width: 450px;
+.w-\[440px\] {
+  width: 440px;
 }
 .w-full {
   width: 100%;
-}
-.w-\[380px\] {
-  width: 380px;
-}
-.w-\[420px\] {
-  width: 420px;
-}
-.w-\[440px\] {
-  width: 440px;
 }
 .flex-1 {
   flex: 1 1 0%;
@@ -915,18 +906,12 @@ video {
   --tw-bg-opacity: 1;
   background-color: rgb(10 17 50 / var(--tw-bg-opacity, 1));
 }
-.bg-p10-dark\/90 {
-  background-color: rgb(10 17 50 / 0.9);
-}
 .bg-transparent {
   background-color: transparent;
 }
 .object-cover {
   -o-object-fit: cover;
      object-fit: cover;
-}
-.p-3 {
-  padding: 0.75rem;
 }
 .p-4 {
   padding: 1rem;
@@ -1054,10 +1039,6 @@ video {
 }
 .filter {
   filter: var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow);
-}
-.backdrop-blur-sm {
-  --tw-backdrop-blur: blur(4px);
-  backdrop-filter: var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);
 }
 .transition-all {
   transition-property: all;
@@ -1201,9 +1182,6 @@ a {
 }
 .hover\:bg-p10-accent\/10:hover {
   background-color: rgb(74 158 255 / 0.1);
-}
-.hover\:bg-p10-dark\/80:hover {
-  background-color: rgb(10 17 50 / 0.8);
 }
 .hover\:bg-p10-maya\/20:hover {
   background-color: rgb(118 200 254 / 0.2);

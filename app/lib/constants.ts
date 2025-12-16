@@ -139,22 +139,22 @@ export const MARKER_CONFIG = {
  * Marker Colors (using p10 palette)
  */
 export const MARKER_COLORS = {
-  // Default state - blue munsell fill with alice blue border
-  FILL: '#00879f',              // p10-blue-munsell
+  // Default state - darker blue munsell fill with grayish blue border
+  FILL: '#006d80',              // darker blue munsell
   FILL_OPACITY: 1,
-  STROKE: '#dee9f0',            // p10-alice
+  STROKE: '#9aadd0',            // slightly lighter grayish blue
   STROKE_OPACITY: 1,
 
   // Outer glow
-  GLOW: '#00879f',              // p10-blue-munsell
+  GLOW: '#006d80',              // darker blue munsell
   GLOW_OPACITY: 0.3,
 
   // Selected state - same colors, just bigger
-  SELECTED_FILL: '#00879f',      // p10-blue-munsell
+  SELECTED_FILL: '#006d80',      // darker blue munsell
   SELECTED_FILL_OPACITY: 1,
-  SELECTED_STROKE: '#dee9f0',    // p10-alice
+  SELECTED_STROKE: '#9aadd0',    // slightly lighter grayish blue
   SELECTED_STROKE_OPACITY: 1,
-  SELECTED_GLOW: '#00879f',      // p10-blue-munsell
+  SELECTED_GLOW: '#006d80',      // darker blue munsell
   SELECTED_GLOW_OPACITY: 0.5,
 
   // Hover state
