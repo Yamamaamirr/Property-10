@@ -8,11 +8,11 @@ export const MAP_CONFIG = {
   ANIMATED_ZOOM: 5.8,
 
   // Zoom limits
-  MIN_ZOOM: 5,
-  MAX_ZOOM: 18,
+  MIN_ZOOM: 5, // Allow zooming out to see full AOI
+  MAX_ZOOM: 18, // Allow zooming in for property details
 
   // Animation timings (in milliseconds)
-  INITIAL_ANIMATION_DELAY: 500,
+  INITIAL_ANIMATION_DELAY: 800, // Start zoom after fade-in completes (700ms)
   INITIAL_ANIMATION_DURATION: 2000,
   PAN_ANIMATION_DURATION: 800,
   ZOOM_BACK_DELAY: 900,

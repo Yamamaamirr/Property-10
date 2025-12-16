@@ -1,5 +1,3 @@
-"use client";
-
 import FloridaMapWrapper from "./components/map/FloridaMapWrapper";
 
 export default function Home() {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useMemo, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import type { PropertyLocation } from '../lib/types';
 import {
@@ -8,14 +8,12 @@ import {
   MAP_COLORS,
   MAP_OPACITY,
   MAP_LINE_WIDTH,
-  MAP_OFFSETS,
-  POPUP_CONFIG
+  MAP_OFFSETS
 } from '../lib/constants';
 import {
   extractFloridaCoordinates,
   createWorldMinusFloridaMask,
-  getMapTilerStyleURL,
-  createPopupHTML
+  getMapTilerStyleURL
 } from '../lib/mapUtils';
 
 interface UseMapSetupProps {
@@ -25,6 +23,7 @@ interface UseMapSetupProps {
 
 interface UseMapSetupReturn {
   mapContainer: React.RefObject<HTMLDivElement>;
+  map: React.RefObject<maplibregl.Map | null>;
   isLoading: boolean;
   error: Error | null;
 }
@@ -36,17 +35,15 @@ interface UseMapSetupReturn {
 export function useMapSetup({ locations, onError }: UseMapSetupProps): UseMapSetupReturn {
   const mapContainer = useRef<HTMLDivElement>(null!);
   const map = useRef<maplibregl.Map | null>(null);
-  const currentPopup = useRef<maplibregl.Popup | null>(null);
-  const timeoutIds = useRef<NodeJS.Timeout[]>([]);
   const isInitialized = useRef(false);
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  // Helper to register timeouts for cleanup
-  const registerTimeout = useCallback((timeoutId: NodeJS.Timeout) => {
-    timeoutIds.current.push(timeoutId);
-  }, []);
+  // Debug logging for loading state changes
+  useEffect(() => {
+    console.log('[MAP STATE] isLoading changed to:', isLoading);
+  }, [isLoading]);
 
   useEffect(() => {
     // Prevent double initialization (React Strict Mode)
@@ -68,6 +65,7 @@ export function useMapSetup({ locations, onError }: UseMapSetupProps): UseMapSet
       try {
         const styleURL = getMapTilerStyleURL();
 
+        console.log('[MAP] Initializing map instance...');
         // Initialize map
         const mapInstance = new maplibregl.Map({
           container: mapContainer.current,
@@ -80,16 +78,7 @@ export function useMapSetup({ locations, onError }: UseMapSetupProps): UseMapSet
         });
 
         map.current = mapInstance;
-
-        // Add navigation controls
-        mapInstance.addControl(
-          new maplibregl.NavigationControl({
-            showCompass: true,
-            showZoom: true,
-            visualizePitch: true
-          }),
-          'top-right'
-        );
+        console.log('[MAP] Map instance created');
 
         // Add error event listener
         mapInstance.on('error', (e) => {
@@ -103,6 +92,7 @@ export function useMapSetup({ locations, onError }: UseMapSetupProps): UseMapSet
 
         // Wait for map to load
         mapInstance.on('load', async () => {
+          console.log('[MAP] Map load event fired');
           if (!isActive || !map.current) return;
 
           // Double-check style is loaded
@@ -122,19 +112,7 @@ export function useMapSetup({ locations, onError }: UseMapSetupProps): UseMapSet
 
           if (!isActive) return;
 
-          setIsLoading(false);
-
-          // Animate initial zoom
-          const zoomTimeout = setTimeout(() => {
-            if (map.current && isActive) {
-              map.current.easeTo({
-                zoom: MAP_CONFIG.ANIMATED_ZOOM,
-                duration: MAP_CONFIG.INITIAL_ANIMATION_DURATION,
-                easing: MAP_CONFIG.EASE_OUT_QUAD
-              });
-            }
-          }, MAP_CONFIG.INITIAL_ANIMATION_DELAY);
-          registerTimeout(zoomTimeout);
+          // DON'T set isLoading to false yet - wait until masking is applied
 
           try {
             // Load Florida boundary GeoJSON
@@ -155,6 +133,8 @@ export function useMapSetup({ locations, onError }: UseMapSetupProps): UseMapSet
             // Add layers (with style loaded check)
             if (!map.current.isStyleLoaded()) return;
 
+            console.log('[MAP] Adding masking layers...');
+
             // Add dark mask layer
             map.current.addLayer({
               id: 'dark-mask',
@@ -168,6 +148,7 @@ export function useMapSetup({ locations, onError }: UseMapSetupProps): UseMapSet
                 'fill-opacity': MAP_OPACITY.DARK_MASK
               }
             });
+            console.log('[MAP] ✓ Added dark-mask layer');
 
             // Add Florida highlight fill
             map.current.addLayer({
@@ -182,6 +163,7 @@ export function useMapSetup({ locations, onError }: UseMapSetupProps): UseMapSet
                 'fill-opacity': MAP_OPACITY.FLORIDA_FILL
               }
             });
+            console.log('[MAP] ✓ Added florida-fill layer');
 
             // Add emboss shadow effect
             map.current.addLayer({
@@ -229,33 +211,61 @@ export function useMapSetup({ locations, onError }: UseMapSetupProps): UseMapSet
                 'line-opacity': MAP_OPACITY.OUTLINE_MAIN
               }
             });
+            console.log('[MAP] ✓ Added florida-outline layer');
 
-            // Show default popup for first property on page load
-            if (locations.length > 0 && map.current) {
-              const firstProperty = locations[0];
-              const popupHTML = createPopupHTML({
-                title: firstProperty.title,
-                name: firstProperty.name,
-                price: firstProperty.price,
-                size: firstProperty.size,
-                tags: firstProperty.tags,
-                image: firstProperty.image
+            // Track when our masking layers are fully rendered
+            let layersRendered = false;
+            let renderCheckCount = 0;
+
+            const checkLayersAndReveal = () => {
+              if (!isActive || !map.current || layersRendered) return;
+
+              renderCheckCount++;
+              console.log(`[MAP] Render check #${renderCheckCount} - checking for layers...`);
+
+              // Verify all our custom layers exist and are rendered
+              const darkMask = map.current.getLayer('dark-mask');
+              const floridaFill = map.current.getLayer('florida-fill');
+              const floridaOutline = map.current.getLayer('florida-outline');
+
+              console.log('[MAP] Layer status:', {
+                darkMask: !!darkMask,
+                floridaFill: !!floridaFill,
+                floridaOutline: !!floridaOutline
               });
 
-              // Create popup immediately on load
-              currentPopup.current = new maplibregl.Popup({
-                closeButton: POPUP_CONFIG.CLOSE_BUTTON,
-                closeOnClick: POPUP_CONFIG.CLOSE_ON_CLICK,
-                offset: POPUP_CONFIG.OFFSET
-              })
-                .setLngLat(firstProperty.coordinates)
-                .setHTML(popupHTML)
-                .addTo(map.current);
+              if (darkMask && floridaFill && floridaOutline) {
+                layersRendered = true;
+                console.log('[MAP] ✓ All layers confirmed! Preparing to reveal map...');
 
-              currentPopup.current.on('close', () => {
-                currentPopup.current = null;
-              });
-            }
+                // Remove the render listener since we've confirmed layers exist
+                if (map.current) {
+                  map.current.off('render', checkLayersAndReveal);
+                }
+
+                // Use double requestAnimationFrame to ensure we're past the paint cycle
+                requestAnimationFrame(() => {
+                  console.log('[MAP] First RAF complete');
+                  requestAnimationFrame(() => {
+                    if (!isActive) return;
+
+                    console.log('[MAP] Second RAF complete - hiding loader and revealing map');
+                    // NOW set loading to false - masking layers are confirmed rendered
+                    setIsLoading(false);
+                  });
+                });
+              }
+            };
+
+            console.log('[MAP] Setting up render listeners...');
+            // Listen for render events to confirm layers are painted
+            map.current.on('render', checkLayersAndReveal);
+
+            // Also check on idle as a backup
+            map.current.once('idle', () => {
+              console.log('[MAP] Map idle event fired');
+              checkLayersAndReveal();
+            });
           } catch (boundaryError) {
             if (!isActive) return;
             const err = boundaryError instanceof Error ? boundaryError : new Error('Failed to load Florida boundary');
@@ -278,16 +288,6 @@ export function useMapSetup({ locations, onError }: UseMapSetupProps): UseMapSet
     return () => {
       isActive = false;
 
-      // Clear all timeouts
-      timeoutIds.current.forEach(clearTimeout);
-      timeoutIds.current = [];
-
-      // Remove popup
-      if (currentPopup.current) {
-        currentPopup.current.remove();
-        currentPopup.current = null;
-      }
-
       // Remove map
       if (map.current) {
         map.current.remove();
@@ -297,7 +297,7 @@ export function useMapSetup({ locations, onError }: UseMapSetupProps): UseMapSet
       // Reset initialization flag so it can reinitialize if needed
       isInitialized.current = false;
     };
-  }, [locations, onError, registerTimeout]);
+  }, [locations, onError]);
 
-  return { mapContainer, isLoading, error };
+  return { mapContainer, map, isLoading, error };
 }

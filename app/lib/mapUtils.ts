@@ -97,6 +97,40 @@ export function createWorldMinusFloridaMask(floridaCoordinates: number[][][] | n
 }
 
 /**
+ * Calculate bounding box from Florida coordinates
+ * Returns [minLng, minLat, maxLng, maxLat] format for fitBounds
+ */
+export function calculateFloridaBounds(floridaCoordinates: number[][][] | number[][][][]): [number, number, number, number] {
+  let minLng = Infinity;
+  let minLat = Infinity;
+  let maxLng = -Infinity;
+  let maxLat = -Infinity;
+
+  // Determine if we have a MultiPolygon or Polygon
+  const isMultiPolygon = Array.isArray(floridaCoordinates[0]?.[0]?.[0]);
+
+  let allCoordinates: number[][][] = [];
+
+  if (isMultiPolygon) {
+    allCoordinates = (floridaCoordinates as number[][][][]).flat();
+  } else {
+    allCoordinates = floridaCoordinates as number[][][];
+  }
+
+  // Iterate through all rings and find min/max coordinates
+  allCoordinates.forEach((ring) => {
+    ring.forEach(([lng, lat]) => {
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    });
+  });
+
+  return [minLng, minLat, maxLng, maxLat];
+}
+
+/**
  * Generates the HTML for the property popup
  */
 export function createPopupHTML(props: PopupProps): string {
