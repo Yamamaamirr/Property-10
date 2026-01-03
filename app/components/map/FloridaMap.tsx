@@ -1,54 +1,29 @@
 "use client";
 
-import React, { useState, useCallback } from 'react';
+import React, { useCallback } from 'react';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { propertyLocations } from '../../data/locations';
 import { useMapSetup } from '../../hooks/useMapSetup';
 import Spinner from '../ui/Spinner';
-import PropertySidebar from '../ui/PropertySidebar';
 
 /**
  * FloridaMap Component
  *
- * Interactive map of Florida showing luxury property locations.
- * Uses MapLibre GL with a custom "cookie-cutter" effect to highlight Florida.
- * Styled with Tailwind CSS for maintainability.
+ * Interactive map of Florida with a custom "cookie-cutter" effect to highlight Florida.
+ * Uses MapLibre GL styled with Tailwind CSS for maintainability.
  */
 export default function FloridaMap() {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [selectedPropertyIndex, setSelectedPropertyIndex] = useState<number | null>(null);
-
   // Memoize the error callback to prevent map reinitialization on re-renders
   const handleMapError = useCallback((err: Error) => {
     console.error('Map error:', err);
   }, []);
 
-  // Handle property selection from either map or sidebar
-  const handlePropertySelect = useCallback((index: number | null) => {
-    setSelectedPropertyIndex(index);
-  }, []);
-
-  const { mapContainer, isLoading, error, flyToProperty } = useMapSetup({
-    locations: propertyLocations,
-    selectedPropertyIndex,
-    onPropertySelect: handlePropertySelect,
+  const { mapContainer, isLoading, error } = useMapSetup({
     onError: handleMapError
   });
 
-  // Handle property card click - select and fly to property
-  const handlePropertyCardClick = useCallback((index: number) => {
-    setSelectedPropertyIndex(index);
-    flyToProperty(index);
-  }, [flyToProperty]);
-
-  // Handle sidebar toggle
-  const handleSidebarToggle = useCallback((isOpen: boolean) => {
-    setIsSidebarOpen(isOpen);
-  }, []);
-
   return (
     <div className="w-full h-screen relative bg-p10-dark">
-      {/* Map Container - ALWAYS full width, sidebar overlays on top */}
+      {/* Map Container */}
       <div className="absolute inset-0">
         {/* Map container - always rendered but covered by overlay when loading */}
         <div
@@ -70,14 +45,6 @@ export default function FloridaMap() {
           </div>
         )}
       </div>
-
-      {/* Left Sidebar - fixed overlay on top of map */}
-      <PropertySidebar
-        isOpen={isSidebarOpen}
-        onToggle={handleSidebarToggle}
-        selectedPropertyIndex={selectedPropertyIndex}
-        onPropertySelect={handlePropertyCardClick}
-      />
     </div>
   );
 }

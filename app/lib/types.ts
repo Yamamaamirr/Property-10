@@ -82,3 +82,56 @@ export interface PopupProps {
   tags: string[];
   image: string;
 }
+
+// ===== Admin & Database Types =====
+
+/**
+ * Region Database Table
+ */
+export interface Region {
+  id: string;
+  name: string;
+  slug: string;
+  geom: any;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * City Database Table
+ */
+export interface City {
+  id: string;
+  name: string;
+  slug: string;
+  region_id: string;
+  image_url: string | null;
+  geom: any;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * GeoJSON Feature
+ */
+export interface GeoJSONFeature {
+  type: 'Feature';
+  geometry: {
+    type: string;
+    coordinates: any;
+  };
+  properties: Record<string, any>;
+}
+
+/**
+ * GeoJSON Feature Collection
+ */
+export interface GeoJSONFeatureCollection {
+  type: 'FeatureCollection';
+  features: GeoJSONFeature[];
+}
+
+/**
+ * GeoJSON Data (Feature or FeatureCollection)
+ */
+export type GeoJSONData = GeoJSONFeature | GeoJSONFeatureCollection;

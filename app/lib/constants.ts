@@ -11,6 +11,12 @@ export const MAP_CONFIG = {
   MIN_ZOOM: 5, // Allow zooming out to see full AOI
   MAX_ZOOM: 18, // Allow zooming in for property details
 
+  // Map bounds - restrict to Florida area only
+  MAX_BOUNDS: [
+    [-88.5, 24.0], // Southwest corner [lng, lat]
+    [-79.5, 31.5]  // Northeast corner [lng, lat]
+  ] as [[number, number], [number, number]],
+
   // Animation timings (in milliseconds)
   INITIAL_ANIMATION_DELAY: 800, // Start zoom after fade-in completes (700ms)
   INITIAL_ANIMATION_DURATION: 2000,
@@ -39,13 +45,18 @@ export const MAP_CONFIG = {
  */
 export const MAP_COLORS = {
   // Background and overlays
-  DARK_BACKGROUND: '#0a1132',      // p10-dark
+  DARK_BACKGROUND: '#041725',      // dark background outside Florida
   FLORIDA_FILL: '#163552',         // deeper blue tone
 
   // Border effects
   OUTLINE_SHADOW: '#0a1f35',       // deepened shadow for contrast
   OUTLINE_HIGHLIGHT: '#76c8fe',    // p10-maya
   OUTLINE_CORE: '#005a71',         // deeper blue-munsell tone
+
+  // Region colors
+  REGION_BORDER: '#5A9FD4',        // subtle cyan-blue border for regions
+  REGION_HOVER_FILL: '#2596be',    // region fill color
+  REGION_SELECTED_FILL: '#76c8fe', // selected region fill (cyan)
 
   // Text and UI
   TEXT_COLOR: '#ffffff',           // white
@@ -62,7 +73,7 @@ export const MAP_COLORS = {
  * Map Layer Opacities
  */
 export const MAP_OPACITY = {
-  DARK_MASK: 0.85,
+  DARK_MASK: 0.95,
   FLORIDA_FILL: 0.3,
   OUTLINE_SHADOW: 0.8,
   OUTLINE_HIGHLIGHT: 0.45,
@@ -70,6 +81,10 @@ export const MAP_OPACITY = {
   PIN_GLOW: 0.2,
   PIN_PULSE_START: 0.8,
   PIN_PULSE_END: 0,
+  REGION_BORDER: 0.5,
+  REGION_HOVER_FILL: 0.35,
+  REGION_SELECTED_FILL: 0.5,
+  REGION_FILL_ZOOMED_OUT: 0.25,  // Default fill opacity when zoomed out
 } as const;
 
 /**
@@ -81,6 +96,27 @@ export const MAP_LINE_WIDTH = {
   OUTLINE_MAIN: 0.65,
   TEXT_HALO: 2,
   PIN_PULSE: 2,
+  REGION_BORDER: 1.0,
+} as const;
+
+/**
+ * Region Interaction Configuration
+ */
+export const REGION_CONFIG = {
+  // Zoom settings
+  ZOOM_TO_REGION: 9.5,
+  ZOOM_DURATION: 1800,
+  ZOOM_CURVE: 1.42,
+
+  // Visibility zoom levels
+  MIN_ZOOM_VISIBLE: 5,      // Start showing regions at this zoom level
+  MAX_ZOOM_VISIBLE: 6.0,    // Regions fully visible until this zoom
+  FADE_OUT_START: 6.0,      // Start fading out at this zoom
+  FADE_OUT_END: 7.5,        // Completely invisible after this zoom
+
+  // Transition timings
+  FILL_TRANSITION_DURATION: 300,
+  BORDER_TRANSITION_DURATION: 200,
 } as const;
 
 /**

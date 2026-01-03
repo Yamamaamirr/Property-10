@@ -197,7 +197,7 @@ export function parseTags(tagsString: string | null | undefined): string[] {
  */
 export function getMapTilerStyleURL(): string {
   const apiKey = process.env.NEXT_PUBLIC_MAPTILER_API_KEY;
-  const styleId = process.env.MAPTILER_STYLE_ID || '019b0c46-bf3e-725a-ab49-336f71fa22af';
+  const styleId = process.env.NEXT_PUBLIC_MAPTILER_STYLE_ID || '019b76c8-6a45-7eb0-b188-2d3bba9edff3';
 
   if (!apiKey) {
     throw new Error('NEXT_PUBLIC_MAPTILER_API_KEY is not set in environment variables');

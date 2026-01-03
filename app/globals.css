@@ -2,6 +2,41 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  :root {
+    /* Property 10 Dark Theme */
+    --background: 222 56% 13%; /* #0a1132 */
+    --foreground: 0 0% 100%;
+
+    --card: 217 36% 18%; /* #1a2942 */
+    --card-foreground: 0 0% 100%;
+
+    --popover: 217 36% 18%;
+    --popover-foreground: 0 0% 100%;
+
+    --primary: 211 100% 64%; /* #4a9eff */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 217 38% 26%; /* #2d5a7b */
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 220 23% 65%; /* #8b9dc3 */
+    --muted-foreground: 220 23% 65%;
+
+    --accent: 194 100% 50%; /* #00d4ff */
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 21% 33%; /* #3a4a6a */
+    --input: 220 21% 33%;
+    --ring: 211 100% 64%;
+
+    --radius: 0.5rem;
+  }
+}
+
 /* Base reset and typography */
 * {
   box-sizing: border-box;
