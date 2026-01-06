@@ -15,6 +15,9 @@ import {
   createWorldMinusFloridaMask,
   getMapTilerStyleURL
 } from '../lib/mapUtils';
+import { fetchRegions } from '../lib/api/regions';
+import { fetchCities } from '../lib/api/cities';
+import type { Region, City } from '../lib/types';
 
 interface UseMapSetupProps {
   onError?: (error: Error) => void;
@@ -25,6 +28,9 @@ interface UseMapSetupReturn {
   map: React.RefObject<maplibregl.Map | null>;
   isLoading: boolean;
   error: Error | null;
+  regions: Region[];
+  cities: City[];
+  mapLoaded: boolean;
 }
 
 /**
@@ -38,6 +44,9 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [regions, setRegions] = useState<Region[]>([]);
+  const [cities, setCities] = useState<City[]>([]);
+  const [mapLoaded, setMapLoaded] = useState(false);
 
   // Debug logging for loading state changes
   useEffect(() => {
@@ -149,30 +158,56 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
             });
             console.log('[MAP] ✓ Added dark-mask layer');
 
-            // Load and add regions layer
+            // Load regions and cities from database
             try {
-              const regionsResponse = await fetch('/new.geojson');
-              if (regionsResponse.ok) {
-                const regionsData = await regionsResponse.json();
+              console.log('[MAP] Fetching regions and cities from database...');
+              const [regionsData, citiesData] = await Promise.all([
+                fetchRegions(),
+                fetchCities()
+              ]);
+
+              if (!isActive) return;
+
+              // Store regions and cities in state
+              setRegions(regionsData);
+              setCities(citiesData);
+              console.log(`[MAP] ✓ Fetched ${regionsData.length} regions and ${citiesData.length} cities`);
+
+              // Convert regions to GeoJSON FeatureCollection for map layers
+              if (regionsData.length > 0) {
+                const regionsGeoJSON = {
+                  type: 'FeatureCollection' as const,
+                  features: regionsData
+                    .filter(region => region.geom)
+                    .map(region => ({
+                      type: 'Feature' as const,
+                      properties: {
+                        id: region.id,
+                        name: region.name
+                      },
+                      geometry: region.geom
+                    }))
+                };
 
                 // Add regions fill layer (filled when zoomed out, fades as you zoom in)
+                // Using same colors as admin RegionsMap: #4a9eff fill, #76c8fe border
                 map.current.addLayer({
                   id: 'regions-fill',
                   type: 'fill',
                   source: {
                     type: 'geojson',
-                    data: regionsData
+                    data: regionsGeoJSON as any
                   },
                   paint: {
-                    'fill-color': MAP_COLORS.REGION_HOVER_FILL,
+                    'fill-color': '#4a9eff',
                     'fill-opacity': [
                       'interpolate',
                       ['linear'],
                       ['zoom'],
                       REGION_CONFIG.MIN_ZOOM_VISIBLE, // At zoom 5
-                      MAP_OPACITY.REGION_FILL_ZOOMED_OUT, // visible when zoomed out
+                      0.3, // visible when zoomed out (same as admin)
                       REGION_CONFIG.FADE_OUT_START, // At zoom 6.0
-                      MAP_OPACITY.REGION_FILL_ZOOMED_OUT, // still visible
+                      0.3, // still visible
                       REGION_CONFIG.FADE_OUT_END, // At zoom 6.8
                       0 // completely transparent when zoomed in
                     ]
@@ -185,30 +220,43 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                   type: 'line',
                   source: {
                     type: 'geojson',
-                    data: regionsData
+                    data: regionsGeoJSON as any
                   },
                   paint: {
-                    'line-color': MAP_COLORS.REGION_BORDER,
-                    'line-width': MAP_LINE_WIDTH.REGION_BORDER,
+                    'line-color': '#76c8fe',
+                    'line-width': 1,
                     'line-opacity': [
                       'interpolate',
                       ['linear'],
                       ['zoom'],
                       REGION_CONFIG.MIN_ZOOM_VISIBLE, // At zoom 5
-                      MAP_OPACITY.REGION_BORDER, // visible when zoomed out
+                      1, // visible when zoomed out
                       REGION_CONFIG.FADE_OUT_START, // At zoom 6.0
-                      MAP_OPACITY.REGION_BORDER, // still visible
+                      1, // still visible
                       REGION_CONFIG.FADE_OUT_END, // At zoom 6.8
                       0 // completely transparent when zoomed in
                     ]
                   }
                 });
 
-                console.log('[MAP] ✓ Added regions layers');
+                console.log('[MAP] ✓ Added regions layers from database');
               }
-            } catch (regionsError) {
-              // Regions are optional, don't fail if they don't load
-              console.warn('[MAP] Failed to load regions:', regionsError);
+
+              // Add tilt/pitch logic based on zoom level (same as admin CitiesMap)
+              map.current.on('zoom', () => {
+                if (!map.current) return;
+                const zoom = map.current.getZoom();
+                let targetPitch = 0;
+                if (zoom > 11) {
+                  // Gradually increase pitch from 0 to 45 as zoom goes from 11 to 14
+                  targetPitch = Math.min(45, (zoom - 11) * 15);
+                }
+                map.current.setPitch(targetPitch);
+              });
+              console.log('[MAP] ✓ Added zoom-based tilt logic');
+            } catch (dataError) {
+              // Data loading is optional, don't fail if it doesn't load
+              console.warn('[MAP] Failed to load data from database:', dataError);
             }
 
             // Track when our masking layers are fully rendered
@@ -245,6 +293,7 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
 
                     console.log('[MAP] Second RAF complete - hiding loader and revealing map');
                     // NOW set loading to false - masking layers are confirmed rendered
+                    setMapLoaded(true);
                     setIsLoading(false);
                   });
                 });
@@ -293,5 +342,5 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
     };
   }, [onError]);
 
-  return { mapContainer, map, isLoading, error };
+  return { mapContainer, map, isLoading, error, regions, cities, mapLoaded };
 }

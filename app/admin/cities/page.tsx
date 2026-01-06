@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { MapPin, Trash2, Edit, Plus, X, ChevronUp, ChevronDown, Loader2 } from "lucide-react";
+import { createPortal } from "react-dom";
+import { MapPin, Trash2, Pencil, Plus, X, ChevronUp, ChevronDown, Loader2 } from "lucide-react";
+import Image from "next/image";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Button } from "@/app/components/ui/button";
@@ -28,6 +30,19 @@ import CitiesMap from "@/app/components/admin/CitiesMap";
 import { getMapTilerStyleURL, extractFloridaCoordinates, createWorldMinusFloridaMask } from "@/app/lib/mapUtils";
 import { MAP_CONFIG, MAP_COLORS, MAP_OPACITY } from "@/app/lib/constants";
 import { toast } from "sonner";
+
+/**
+ * Normalize longitude for Florida - converts positive values to negative
+ * Florida longitudes are in the range -79.5 to -87.5 (West)
+ * Users often enter positive values like 80.1373 when they mean -80.1373
+ */
+function normalizeFloridaLongitude(lng: number): number {
+  // If longitude is positive and in Florida's range (79-88), make it negative
+  if (lng > 0 && lng >= 79 && lng <= 88) {
+    return -lng;
+  }
+  return lng;
+}
 
 export default function CitiesPage() {
   const [cities, setCities] = useState<City[]>([]);
@@ -62,12 +77,24 @@ export default function CitiesPage() {
   const [previewMapInitialized, setPreviewMapInitialized] = useState(false);
   const [markerPlaced, setMarkerPlaced] = useState(false);
 
+  // Popup preview state
+  const [popupOpen, setPopupOpen] = useState(false);
+  const [markerElement, setMarkerElement] = useState<HTMLElement | null>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const lineRef = useRef<SVGLineElement>(null);
+
   // Map preview refs for edit dialog
   const editMapContainer = useRef<HTMLDivElement>(null);
   const editMapRef = useRef<maplibregl.Map | null>(null);
   const editMarkerRef = useRef<maplibregl.Marker | null>(null);
   const [editMapInitialized, setEditMapInitialized] = useState(false);
   const [editMarkerPlaced, setEditMarkerPlaced] = useState(false);
+
+  // Popup preview state for edit dialog
+  const [editPopupOpen, setEditPopupOpen] = useState(false);
+  const [editMarkerElement, setEditMarkerElement] = useState<HTMLElement | null>(null);
+  const editPopupRef = useRef<HTMLDivElement>(null);
+  const editLineRef = useRef<SVGLineElement>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -97,6 +124,22 @@ export default function CitiesPage() {
     }
   }, [regions, newCity.region_id]);
 
+  // Check for query params to auto-open add dialog with pre-selected region
+  useEffect(() => {
+    if (typeof window === 'undefined' || regions.length === 0) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const shouldAdd = params.get('add');
+    const regionId = params.get('region');
+
+    if (shouldAdd === 'true' && regionId) {
+      setNewCity((prev) => ({ ...prev, region_id: regionId }));
+      setAddDialogOpen(true);
+      // Clean up URL
+      window.history.replaceState({}, '', '/admin/cities');
+    }
+  }, [regions]);
+
   async function handleAddCity() {
     if (!newCity.name || !newCity.latitude || !newCity.longitude || !newCity.region_id) {
       return;
@@ -107,12 +150,15 @@ export default function CitiesPage() {
 
     try {
       const lat = parseFloat(newCity.latitude);
-      const lng = parseFloat(newCity.longitude);
+      const lngRaw = parseFloat(newCity.longitude);
 
-      if (isNaN(lat) || isNaN(lng)) {
+      if (isNaN(lat) || isNaN(lngRaw)) {
         toast.error("Invalid coordinates. Please enter valid latitude and longitude values.", { id: toastId });
         return;
       }
+
+      // Normalize longitude for Florida (convert positive to negative if needed)
+      const lng = normalizeFloridaLongitude(lngRaw);
 
       const slug = newCity.name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
       const geojsonString = JSON.stringify({
@@ -205,6 +251,15 @@ export default function CitiesPage() {
   // Initialize preview map when add dialog opens
   useEffect(() => {
     if (!addDialogOpen) {
+      // Restore marker label before cleanup
+      if (markerRef.current) {
+        const markerEl = markerRef.current.getElement();
+        const labelEl = markerEl?.querySelector('.marker-label') as HTMLElement;
+        if (labelEl) {
+          labelEl.style.display = 'block';
+        }
+      }
+
       // Cleanup map when dialog closes
       if (previewMapRef.current) {
         previewMapRef.current.remove();
@@ -216,6 +271,8 @@ export default function CitiesPage() {
       }
       setPreviewMapInitialized(false);
       setMarkerPlaced(false);
+      setPopupOpen(false);
+      setMarkerElement(null);
       return;
     }
 
@@ -272,11 +329,26 @@ export default function CitiesPage() {
 
         // Auto-create marker at default location when map loads
         const lat = newCity.latitude ? parseFloat(newCity.latitude) : MAP_CONFIG.INITIAL_CENTER[1];
-        const lng = newCity.longitude ? parseFloat(newCity.longitude) : MAP_CONFIG.INITIAL_CENTER[0];
+        const lngRaw = newCity.longitude ? parseFloat(newCity.longitude) : MAP_CONFIG.INITIAL_CENTER[0];
+        // Normalize longitude for Florida (convert positive to negative if needed)
+        const lng = normalizeFloridaLongitude(lngRaw);
 
         if (!isNaN(lat) && !isNaN(lng)) {
           createMarker(lat, lng, newCity.name, true);
         }
+      });
+
+      // Add pitch based on zoom level for better visual effect
+      map.on('zoom', () => {
+        const zoom = map.getZoom();
+        let targetPitch = 0;
+
+        if (zoom > 11) {
+          // Gradually increase pitch from zoom 11 to 14
+          targetPitch = Math.min(45, (zoom - 11) * 15);
+        }
+
+        map.setPitch(targetPitch);
       });
     }, 300);
 
@@ -298,6 +370,8 @@ export default function CitiesPage() {
       }
       setEditMapInitialized(false);
       setEditMarkerPlaced(false);
+      setEditPopupOpen(false);
+      setEditMarkerElement(null);
       return;
     }
 
@@ -330,6 +404,19 @@ export default function CitiesPage() {
 
       editMapRef.current = map;
 
+      // Add pitch based on zoom level for better visual effect (same as add dialog)
+      map.on('zoom', () => {
+        const zoom = map.getZoom();
+        let targetPitch = 0;
+
+        if (zoom > 11) {
+          // Gradually increase pitch from zoom 11 to 14
+          targetPitch = Math.min(45, (zoom - 11) * 15);
+        }
+
+        map.setPitch(targetPitch);
+      });
+
       map.on("load", async () => {
         // Load Florida boundary to create mask
         try {
@@ -359,8 +446,7 @@ export default function CitiesPage() {
         // Create marker for editing
         const el = document.createElement('div');
         el.style.cssText = `
-          position: relative;
-          cursor: grab;
+          cursor: pointer;
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -402,6 +488,24 @@ export default function CitiesPage() {
           .addTo(map);
 
         editMarkerRef.current = marker;
+
+        // Store marker element for popup line connection
+        setTimeout(() => {
+          setEditMarkerElement(marker.getElement());
+        }, 100);
+
+        // Click to toggle popup preview
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          setEditPopupOpen(prev => {
+            const newState = !prev;
+            // Toggle label visibility
+            if (labelEl) {
+              labelEl.style.display = newState ? 'none' : 'block';
+            }
+            return newState;
+          });
+        });
 
         // Update cursor on drag
         marker.on('dragstart', () => {
@@ -456,8 +560,7 @@ export default function CitiesPage() {
     const el = document.createElement('div');
     el.className = 'custom-city-marker';
     el.style.cssText = `
-      position: relative;
-      cursor: grab;
+      cursor: pointer;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -503,6 +606,24 @@ export default function CitiesPage() {
       .addTo(previewMapRef.current);
 
     markerRef.current = marker;
+
+    // Store marker element for popup line connection
+    setTimeout(() => {
+      setMarkerElement(marker.getElement());
+    }, 100);
+
+    // Click to toggle popup preview
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setPopupOpen(prev => {
+        const newState = !prev;
+        // Toggle label visibility
+        if (labelEl) {
+          labelEl.style.display = newState ? 'none' : 'block';
+        }
+        return newState;
+      });
+    });
 
     // Update form when marker is dragged
     marker.on('dragend', () => {
@@ -550,7 +671,9 @@ export default function CitiesPage() {
   // Handle place marker button click
   const handlePlaceMarker = () => {
     const lat = newCity.latitude ? parseFloat(newCity.latitude) : MAP_CONFIG.INITIAL_CENTER[1];
-    const lng = newCity.longitude ? parseFloat(newCity.longitude) : MAP_CONFIG.INITIAL_CENTER[0];
+    const lngRaw = newCity.longitude ? parseFloat(newCity.longitude) : MAP_CONFIG.INITIAL_CENTER[0];
+    // Normalize longitude for Florida (convert positive to negative if needed)
+    const lng = normalizeFloridaLongitude(lngRaw);
 
     if (!isNaN(lat) && !isNaN(lng)) {
       // Only zoom on initial placement (when marker doesn't exist yet)
@@ -564,9 +687,11 @@ export default function CitiesPage() {
     if (!markerRef.current || !newCity.latitude || !newCity.longitude) return;
 
     const lat = parseFloat(newCity.latitude);
-    const lng = parseFloat(newCity.longitude);
+    const lngRaw = parseFloat(newCity.longitude);
 
-    if (!isNaN(lat) && !isNaN(lng)) {
+    if (!isNaN(lat) && !isNaN(lngRaw)) {
+      // Normalize longitude for Florida (convert positive to negative if needed)
+      const lng = normalizeFloridaLongitude(lngRaw);
       markerRef.current.setLngLat([lng, lat]);
       // Just pan to the new position without changing zoom
       if (previewMapRef.current) {
@@ -591,8 +716,133 @@ export default function CitiesPage() {
     }
   }, [newCity.name, markerPlaced]);
 
+  // Update connecting line position between popup and marker (add dialog)
+  useEffect(() => {
+    if (!popupOpen || !markerElement || !lineRef.current || !previewMapContainer.current) {
+      return;
+    }
+
+    const updateLine = () => {
+      requestAnimationFrame(() => {
+        const container = previewMapContainer.current?.getBoundingClientRect();
+        const marker = markerElement?.getBoundingClientRect();
+        const popup = popupRef.current?.getBoundingClientRect();
+        const line = lineRef.current;
+
+        if (!container || !marker || !popup || !line) return;
+
+        const centerX = marker.left - container.left + marker.width / 2;
+
+        // Popup is always above marker: line goes from popup bottom to marker top
+        const lineStartY = popup.bottom - container.top;
+        const lineEndY = marker.top - container.top;
+
+        line.setAttribute("x1", centerX.toString());
+        line.setAttribute("y1", lineStartY.toString());
+        line.setAttribute("x2", centerX.toString());
+        line.setAttribute("y2", lineEndY.toString());
+      });
+    };
+
+    // Initial line update
+    updateLine();
+
+    // Update line during map movement and marker drag
+    const map = previewMapRef.current;
+    const marker = markerRef.current;
+
+    if (map) {
+      map.on('move', updateLine);
+      map.on('zoom', updateLine);
+    }
+
+    if (marker) {
+      marker.on('drag', updateLine);
+    }
+
+    return () => {
+      if (map) {
+        map.off('move', updateLine);
+        map.off('zoom', updateLine);
+      }
+      if (marker) {
+        marker.off('drag', updateLine);
+      }
+    };
+  }, [popupOpen, markerElement]);
+
+  // Update connecting line position between popup and marker (edit dialog)
+  useEffect(() => {
+    if (!editPopupOpen || !editMarkerElement || !editLineRef.current || !editMapContainer.current) {
+      return;
+    }
+
+    const updateLine = () => {
+      requestAnimationFrame(() => {
+        const container = editMapContainer.current?.getBoundingClientRect();
+        const marker = editMarkerElement?.getBoundingClientRect();
+        const popup = editPopupRef.current?.getBoundingClientRect();
+        const line = editLineRef.current;
+
+        if (!container || !marker || !popup || !line) return;
+
+        const centerX = marker.left - container.left + marker.width / 2;
+
+        // Popup is always above marker: line goes from popup bottom to marker top
+        const lineStartY = popup.bottom - container.top;
+        const lineEndY = marker.top - container.top;
+
+        line.setAttribute("x1", centerX.toString());
+        line.setAttribute("y1", lineStartY.toString());
+        line.setAttribute("x2", centerX.toString());
+        line.setAttribute("y2", lineEndY.toString());
+      });
+    };
+
+    // Initial line update
+    updateLine();
+
+    // Update line during map movement and marker drag
+    const map = editMapRef.current;
+    const marker = editMarkerRef.current;
+
+    if (map) {
+      map.on('move', updateLine);
+      map.on('zoom', updateLine);
+    }
+
+    if (marker) {
+      marker.on('drag', updateLine);
+    }
+
+    return () => {
+      if (map) {
+        map.off('move', updateLine);
+        map.off('zoom', updateLine);
+      }
+      if (marker) {
+        marker.off('drag', updateLine);
+      }
+    };
+  }, [editPopupOpen, editMarkerElement]);
+
   return (
     <div className="relative h-screen">
+      <style jsx global>{`
+        @keyframes popupEnter {
+          0% {
+            opacity: 0;
+            transform: translateX(-50%) translateY(8px) scale(0.96);
+          }
+          100% {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0) scale(1);
+          }
+        }
+        .popup-enter {
+          animation: popupEnter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+      `}</style>
       {/* Map Container */}
       <div className="absolute inset-0">
         <CitiesMap cities={cities} selectedCityId={selectedCityId} sheetOpen={sheetOpen} onCityClick={(cityId) => setSelectedCityId(cityId === selectedCityId ? null : cityId)} />
@@ -703,7 +953,7 @@ export default function CitiesPage() {
                         className="h-6 w-6 rounded-md flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-colors"
                         title={`Edit ${city.name}`}
                       >
-                        <Edit className="w-3 h-3" />
+                        <Pencil className="w-3 h-3" />
                       </button>
                       <button
                         onClick={(e) => {
@@ -751,7 +1001,7 @@ export default function CitiesPage() {
 
             <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
               {/* Map Preview */}
-              <div className="relative bg-gray-100 dark:bg-gray-900 h-[35vh] md:h-auto md:flex-1">
+              <div className="relative bg-gray-100 dark:bg-gray-900 h-[35vh] md:h-auto md:flex-1 overflow-hidden">
                 {!previewMapInitialized && (
                   <div className="absolute inset-0 flex items-center justify-center bg-background/50 backdrop-blur-sm z-10">
                     <div className="text-center px-4">
@@ -764,6 +1014,109 @@ export default function CitiesPage() {
                   ref={previewMapContainer}
                   className="absolute inset-0 w-full h-full"
                 />
+
+                {/* Connecting Line */}
+                {popupOpen && (
+                  <svg
+                    className="absolute inset-0 pointer-events-none z-20"
+                    style={{ width: "100%", height: "100%" }}
+                  >
+                    <line
+                      ref={lineRef}
+                      stroke="#8ce3ff"
+                      strokeWidth="1.5"
+                      strokeDasharray="3 2"
+                      opacity="0.7"
+                    />
+                  </svg>
+                )}
+
+                {/* Popup Card - rendered via Portal inside marker element */}
+                {popupOpen && markerElement && createPortal(
+                  <div
+                    ref={popupRef}
+                    className="absolute pointer-events-auto popup-enter"
+                    style={{
+                      bottom: '50px',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      width: 'min(85vw, 240px)',
+                      zIndex: 9999,
+                    }}
+                  >
+                    <div className="bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-xl rounded-xl overflow-hidden shadow-2xl border border-white/10">
+                      {/* Image */}
+                      <div className="relative h-24 overflow-hidden">
+                        <Image
+                          src={newCity.image_url || "https://images.unsplash.com/photo-1505881502353-a1986add3762?w=800&auto=format&fit=crop"}
+                          alt={newCity.name || "City"}
+                          fill
+                          className="object-cover"
+                          unoptimized
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent" />
+
+                        {/* Close Button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPopupOpen(false);
+                            // Show the marker label again
+                            if (markerRef.current) {
+                              const markerEl = markerRef.current.getElement();
+                              const labelEl = markerEl?.querySelector('.marker-label') as HTMLElement;
+                              if (labelEl) {
+                                labelEl.style.display = 'block';
+                              }
+                            }
+                          }}
+                          className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-slate-900/80 backdrop-blur-sm flex items-center justify-center hover:bg-slate-900 transition-colors border border-white/10"
+                        >
+                          <X className="w-3 h-3 text-white" />
+                        </button>
+                      </div>
+
+                      {/* Content */}
+                      <div className="p-3 space-y-3">
+                        {/* Location Name */}
+                        <div className="flex items-center gap-1.5">
+                          <MapPin className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                          <h3 className="text-xs font-semibold text-white">
+                            {newCity.name || "City Location"}, Florida
+                          </h3>
+                        </div>
+
+                        {/* Add to Preferences Button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // Toggle preference - for now just visual feedback
+                            const checkbox = e.currentTarget.querySelector('.preference-checkbox') as HTMLElement;
+                            if (checkbox) {
+                              const isChecked = checkbox.dataset.checked === 'true';
+                              checkbox.dataset.checked = (!isChecked).toString();
+                              checkbox.innerHTML = !isChecked ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-3 h-3 text-white"><path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clip-rule="evenodd" /></svg>' : '';
+                              checkbox.style.backgroundColor = !isChecked ? '#0d9488' : 'transparent';
+                              checkbox.style.borderColor = !isChecked ? '#0d9488' : 'rgba(255, 255, 255, 0.5)';
+                            }
+                          }}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 hover:bg-white/5"
+                          style={{ backgroundColor: 'rgba(30, 70, 90, 0.5)' }}
+                        >
+                          <div
+                            className="preference-checkbox w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-all duration-200"
+                            data-checked="false"
+                            style={{ border: '2px solid rgba(255, 255, 255, 0.5)' }}
+                          />
+                          <span className="text-xs text-white/80">
+                            Add to preferences
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>,
+                  markerElement
+                )}
               </div>
 
               {/* Form */}
@@ -846,7 +1199,7 @@ export default function CitiesPage() {
                 variant="outline"
                 onClick={() => setAddDialogOpen(false)}
                 disabled={adding}
-                className="w-full sm:w-auto h-9 md:h-10 text-xs md:text-sm"
+                className="w-full sm:w-auto h-9 md:h-10 text-xs md:text-sm hover:bg-white/10 hover:text-foreground"
               >
                 Cancel
               </Button>
@@ -888,7 +1241,7 @@ export default function CitiesPage() {
               <>
                 <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
                   {/* Map Preview */}
-                  <div className="relative bg-gray-100 dark:bg-gray-900 h-[35vh] md:h-auto md:flex-1">
+                  <div className="relative bg-gray-100 dark:bg-gray-900 h-[35vh] md:h-auto md:flex-1 overflow-hidden">
                     {!editMapInitialized && (
                       <div className="absolute inset-0 flex items-center justify-center bg-background/50 backdrop-blur-sm z-10">
                         <div className="text-center px-4">
@@ -901,6 +1254,109 @@ export default function CitiesPage() {
                       ref={editMapContainer}
                       className="absolute inset-0 w-full h-full"
                     />
+
+                    {/* Connecting Line */}
+                    {editPopupOpen && (
+                      <svg
+                        className="absolute inset-0 pointer-events-none z-20"
+                        style={{ width: "100%", height: "100%" }}
+                      >
+                        <line
+                          ref={editLineRef}
+                          stroke="#8ce3ff"
+                          strokeWidth="1.5"
+                          strokeDasharray="3 2"
+                          opacity="0.7"
+                        />
+                      </svg>
+                    )}
+
+                    {/* Popup Card - rendered via Portal inside marker element */}
+                    {editPopupOpen && editMarkerElement && createPortal(
+                      <div
+                        ref={editPopupRef}
+                        className="absolute pointer-events-auto popup-enter"
+                        style={{
+                          bottom: '50px',
+                          left: '50%',
+                          transform: 'translateX(-50%)',
+                          width: 'min(85vw, 240px)',
+                          zIndex: 9999,
+                        }}
+                      >
+                        <div className="bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-xl rounded-xl overflow-hidden shadow-2xl border border-white/10">
+                          {/* Image */}
+                          <div className="relative h-24 overflow-hidden">
+                            <Image
+                              src={editingCity?.image_url || "https://images.unsplash.com/photo-1505881502353-a1986add3762?w=800&auto=format&fit=crop"}
+                              alt={editingCity?.name || "City"}
+                              fill
+                              className="object-cover"
+                              unoptimized
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent" />
+
+                            {/* Close Button */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditPopupOpen(false);
+                                // Show the marker label again
+                                if (editMarkerRef.current) {
+                                  const markerEl = editMarkerRef.current.getElement();
+                                  const labelEl = markerEl?.querySelector('.edit-marker-label') as HTMLElement;
+                                  if (labelEl) {
+                                    labelEl.style.display = 'block';
+                                  }
+                                }
+                              }}
+                              className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-slate-900/80 backdrop-blur-sm flex items-center justify-center hover:bg-slate-900 transition-colors border border-white/10"
+                            >
+                              <X className="w-3 h-3 text-white" />
+                            </button>
+                          </div>
+
+                          {/* Content */}
+                          <div className="p-3 space-y-3">
+                            {/* Location Name */}
+                            <div className="flex items-center gap-1.5">
+                              <MapPin className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                              <h3 className="text-xs font-semibold text-white">
+                                {editingCity?.name}, Florida
+                              </h3>
+                            </div>
+
+                            {/* Add to Preferences Button */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                // Toggle preference - for now just visual feedback
+                                const checkbox = e.currentTarget.querySelector('.preference-checkbox') as HTMLElement;
+                                if (checkbox) {
+                                  const isChecked = checkbox.dataset.checked === 'true';
+                                  checkbox.dataset.checked = (!isChecked).toString();
+                                  checkbox.innerHTML = !isChecked ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-3 h-3 text-white"><path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clip-rule="evenodd" /></svg>' : '';
+                                  checkbox.style.backgroundColor = !isChecked ? '#0d9488' : 'transparent';
+                                  checkbox.style.borderColor = !isChecked ? '#0d9488' : 'rgba(255, 255, 255, 0.5)';
+                                }
+                              }}
+                              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 hover:bg-white/5"
+                              style={{ backgroundColor: 'rgba(30, 70, 90, 0.5)' }}
+                            >
+                              <div
+                                className="preference-checkbox w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-all duration-200"
+                                data-checked="false"
+                                style={{ border: '2px solid rgba(255, 255, 255, 0.5)' }}
+                              />
+                              <span className="text-xs text-white/80">
+                                Add to preferences
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>,
+                      editMarkerElement
+                    )}
                   </div>
 
                   {/* Form */}
@@ -1006,7 +1462,7 @@ export default function CitiesPage() {
                   <Button
                     variant="outline"
                     onClick={() => setEditingCity(null)}
-                    className="w-full sm:w-auto h-9 md:h-10 text-xs md:text-sm"
+                    className="w-full sm:w-auto h-9 md:h-10 text-xs md:text-sm hover:bg-white/10 hover:text-foreground"
                   >
                     Cancel
                   </Button>
