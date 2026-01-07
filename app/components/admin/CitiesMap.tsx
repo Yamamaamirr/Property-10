@@ -60,31 +60,30 @@ export default function CitiesMap({ cities, selectedCityId, onCityClick, sheetOp
     map.current = mapInstance;
 
     // Add pitch based on zoom level for better visual effect
-    // Track touch state to avoid interrupting mobile pinch gestures
-    let isTouching = false;
-    let currentPitch = 0;
-
     const getTargetPitch = (zoom: number) => zoom > 11 ? Math.min(45, (zoom - 11) * 15) : 0;
 
-    mapInstance.on('touchstart', () => { isTouching = true; });
-    mapInstance.on('touchend', () => {
-      isTouching = false;
-      // Only update pitch if it actually changed significantly
-      const zoom = mapInstance.getZoom();
-      const targetPitch = getTargetPitch(zoom);
-      if (Math.abs(targetPitch - currentPitch) > 1) {
-        currentPitch = targetPitch;
-        mapInstance.easeTo({ pitch: targetPitch, duration: 500 });
-      }
-    });
+    // On desktop (non-touch), update pitch in real-time during zoom
+    // On mobile, update pitch only when map becomes idle to avoid interrupting gestures
+    const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
-    mapInstance.on('zoom', () => {
-      if (isTouching) return; // Skip during touch gestures to avoid interrupting pinch
-      const zoom = mapInstance.getZoom();
-      const targetPitch = getTargetPitch(zoom);
-      currentPitch = targetPitch;
-      mapInstance.setPitch(targetPitch);
-    });
+    if (isTouchDevice) {
+      // Mobile: update pitch when map is idle (after all interactions complete)
+      mapInstance.on('idle', () => {
+        const zoom = mapInstance.getZoom();
+        const targetPitch = getTargetPitch(zoom);
+        const currentPitch = mapInstance.getPitch();
+        if (Math.abs(targetPitch - currentPitch) > 0.5) {
+          mapInstance.easeTo({ pitch: targetPitch, duration: 300 });
+        }
+      });
+    } else {
+      // Desktop: real-time pitch updates during zoom
+      mapInstance.on('zoom', () => {
+        const zoom = mapInstance.getZoom();
+        const targetPitch = getTargetPitch(zoom);
+        mapInstance.setPitch(targetPitch);
+      });
+    }
 
     mapInstance.on("load", async () => {
       try {

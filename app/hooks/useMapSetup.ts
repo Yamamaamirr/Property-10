@@ -259,32 +259,32 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
               }
 
               // Add tilt/pitch logic based on zoom level (same as admin CitiesMap)
-              // Track touch state to avoid interrupting mobile pinch gestures
-              let isTouching = false;
-              let currentPitch = 0;
-
               const getTargetPitch = (zoom: number) => zoom > 11 ? Math.min(45, (zoom - 11) * 15) : 0;
 
-              map.current.on('touchstart', () => { isTouching = true; });
-              map.current.on('touchend', () => {
-                if (!map.current) return;
-                isTouching = false;
-                // Only update pitch if it actually changed significantly
-                const zoom = map.current.getZoom();
-                const targetPitch = getTargetPitch(zoom);
-                if (Math.abs(targetPitch - currentPitch) > 1) {
-                  currentPitch = targetPitch;
-                  map.current.easeTo({ pitch: targetPitch, duration: 500 });
-                }
-              });
+              // On desktop (non-touch), update pitch in real-time during zoom
+              // On mobile, update pitch only when map becomes idle to avoid interrupting gestures
+              const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
-              map.current.on('zoom', () => {
-                if (!map.current || isTouching) return; // Skip during touch gestures
-                const zoom = map.current.getZoom();
-                const targetPitch = getTargetPitch(zoom);
-                currentPitch = targetPitch;
-                map.current.setPitch(targetPitch);
-              });
+              if (isTouchDevice) {
+                // Mobile: update pitch when map is idle (after all interactions complete)
+                map.current.on('idle', () => {
+                  if (!map.current) return;
+                  const zoom = map.current.getZoom();
+                  const targetPitch = getTargetPitch(zoom);
+                  const currentPitch = map.current.getPitch();
+                  if (Math.abs(targetPitch - currentPitch) > 0.5) {
+                    map.current.easeTo({ pitch: targetPitch, duration: 300 });
+                  }
+                });
+              } else {
+                // Desktop: real-time pitch updates during zoom
+                map.current.on('zoom', () => {
+                  if (!map.current) return;
+                  const zoom = map.current.getZoom();
+                  const targetPitch = getTargetPitch(zoom);
+                  map.current.setPitch(targetPitch);
+                });
+              }
               console.log('[MAP] ✓ Added zoom-based tilt logic');
             } catch (dataError) {
               // Data loading is optional, don't fail if it doesn't load
