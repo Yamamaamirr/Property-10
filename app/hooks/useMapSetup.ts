@@ -259,16 +259,28 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
               }
 
               // Add tilt/pitch logic based on zoom level (same as admin CitiesMap)
-              // Use zoomend instead of zoom to avoid interrupting mobile pinch gestures
-              map.current.on('zoomend', () => {
+              // Track touch state to avoid interrupting mobile pinch gestures
+              let isTouching = false;
+
+              map.current.on('touchstart', () => { isTouching = true; });
+              map.current.on('touchend', () => {
                 if (!map.current) return;
+                isTouching = false;
+                // Update pitch after touch gesture ends
+                const zoom = map.current.getZoom();
+                const targetPitch = zoom > 11 ? Math.min(45, (zoom - 11) * 15) : 0;
+                map.current.setPitch(targetPitch);
+              });
+
+              map.current.on('zoom', () => {
+                if (!map.current || isTouching) return; // Skip during touch gestures
                 const zoom = map.current.getZoom();
                 let targetPitch = 0;
                 if (zoom > 11) {
                   // Gradually increase pitch from 0 to 45 as zoom goes from 11 to 14
                   targetPitch = Math.min(45, (zoom - 11) * 15);
                 }
-                map.current.easeTo({ pitch: targetPitch, duration: 300 });
+                map.current.setPitch(targetPitch);
               });
               console.log('[MAP] ✓ Added zoom-based tilt logic');
             } catch (dataError) {

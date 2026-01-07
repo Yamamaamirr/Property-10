@@ -59,9 +59,21 @@ export default function CitiesMap({ cities, selectedCityId, onCityClick, sheetOp
 
     map.current = mapInstance;
 
-    // Add pitch based on zoom level for better visual effect (same as add dialog)
-    // Use zoomend instead of zoom to avoid interrupting mobile pinch gestures
-    mapInstance.on('zoomend', () => {
+    // Add pitch based on zoom level for better visual effect
+    // Track touch state to avoid interrupting mobile pinch gestures
+    let isTouching = false;
+
+    mapInstance.on('touchstart', () => { isTouching = true; });
+    mapInstance.on('touchend', () => {
+      isTouching = false;
+      // Update pitch after touch gesture ends
+      const zoom = mapInstance.getZoom();
+      const targetPitch = zoom > 11 ? Math.min(45, (zoom - 11) * 15) : 0;
+      mapInstance.setPitch(targetPitch);
+    });
+
+    mapInstance.on('zoom', () => {
+      if (isTouching) return; // Skip during touch gestures to avoid interrupting pinch
       const zoom = mapInstance.getZoom();
       let targetPitch = 0;
 
@@ -70,7 +82,7 @@ export default function CitiesMap({ cities, selectedCityId, onCityClick, sheetOp
         targetPitch = Math.min(45, (zoom - 11) * 15);
       }
 
-      mapInstance.easeTo({ pitch: targetPitch, duration: 300 });
+      mapInstance.setPitch(targetPitch);
     });
 
     mapInstance.on("load", async () => {
