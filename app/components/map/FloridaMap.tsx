@@ -5,16 +5,26 @@ import { createPortal } from 'react-dom';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { useMapSetup } from '../../hooks/useMapSetup';
-import Spinner from '../ui/Spinner';
-import { MapPin, X } from 'lucide-react';
+import { Loader2, MapPin, X, Hexagon } from 'lucide-react';
 import Image from 'next/image';
 import type { City } from '@/app/lib/types';
+import { REGION_CONFIG } from '@/app/lib/constants';
 
-// Helper function for label opacity based on zoom
-const getLabelOpacity = (zoom: number) => {
-  if (zoom < 7) return 0;
-  if (zoom < 8) return zoom - 7;
-  return 1;
+// Helper function for marker visibility based on zoom (appears after entering region)
+const getMarkerVisibility = (zoom: number): { opacity: number; visible: boolean } => {
+  if (zoom < REGION_CONFIG.CITY_MARKERS_START) {
+    return { opacity: 0, visible: false };
+  }
+  if (zoom < REGION_CONFIG.CITY_MARKERS_FULL) {
+    const opacity = (zoom - REGION_CONFIG.CITY_MARKERS_START) / (REGION_CONFIG.CITY_MARKERS_FULL - REGION_CONFIG.CITY_MARKERS_START);
+    return { opacity, visible: true };
+  }
+  return { opacity: 1, visible: true };
+};
+
+// Helper to get just opacity value for label restoration
+const getLabelOpacity = (zoom: number): number => {
+  return getMarkerVisibility(zoom).opacity;
 };
 
 // Helper function for label scale based on zoom (using scale instead of font-size to avoid layout shifts)
@@ -37,7 +47,7 @@ export default function FloridaMap() {
     console.error('Map error:', err);
   }, []);
 
-  const { mapContainer, map, isLoading, error, cities, mapLoaded } = useMapSetup({
+  const { mapContainer, map, isLoading, error, cities, regions, mapLoaded } = useMapSetup({
     onError: handleMapError
   });
 
@@ -48,6 +58,147 @@ export default function FloridaMap() {
   const [popupMarkerElement, setPopupMarkerElement] = useState<HTMLElement | null>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   const lineRef = useRef<SVGLineElement>(null);
+  const popupCityIdRef = useRef<string | null>(null);
+
+  // Current region and zoom state for UI indicator
+  const [currentRegion, setCurrentRegion] = useState<string | null>(null);
+  const [currentZoom, setCurrentZoom] = useState<number>(5);
+  const [showRegionIndicator, setShowRegionIndicator] = useState(false);
+
+  // Keep ref in sync with state for use in event handlers
+  useEffect(() => {
+    popupCityIdRef.current = popupCityId;
+  }, [popupCityId]);
+
+  // Track zoom level and determine current region
+  useEffect(() => {
+    if (!map.current || !mapLoaded) return;
+
+    const mapInstance = map.current;
+    let debounceTimer: NodeJS.Timeout | null = null;
+
+    const updateZoomAndRegion = () => {
+      const zoom = mapInstance.getZoom();
+      setCurrentZoom(zoom);
+
+      // Show region indicator when zoomed in past threshold
+      const shouldShowIndicator = zoom >= REGION_CONFIG.REGION_INDICATOR_ZOOM;
+      setShowRegionIndicator(shouldShowIndicator);
+
+      if (shouldShowIndicator && regions.length > 0) {
+        // Get map center and bounds
+        const center = mapInstance.getCenter();
+        const centerPoint: [number, number] = [center.lng, center.lat];
+        const bounds = mapInstance.getBounds();
+
+        // First, check if center is inside any region
+        let foundRegion: string | null = null;
+        for (const region of regions) {
+          if (region.geom && isPointInRegion(centerPoint, region.geom)) {
+            foundRegion = region.name;
+            break;
+          }
+        }
+
+        // If center is not in any region, find the closest visible region
+        if (!foundRegion) {
+          let closestRegion: string | null = null;
+          let closestDistance = Infinity;
+
+          for (const region of regions) {
+            if (!region.geom) continue;
+
+            // Get region centroid and check if it's visible in viewport
+            const centroid = getRegionCentroid(region.geom);
+            if (centroid && bounds.contains(centroid)) {
+              const distance = Math.sqrt(
+                Math.pow(centroid[0] - centerPoint[0], 2) +
+                Math.pow(centroid[1] - centerPoint[1], 2)
+              );
+              if (distance < closestDistance) {
+                closestDistance = distance;
+                closestRegion = region.name;
+              }
+            }
+          }
+          foundRegion = closestRegion;
+        }
+
+        setCurrentRegion(foundRegion);
+      } else {
+        setCurrentRegion(null);
+      }
+    };
+
+    // Debounced update for smooth experience during zooming
+    const debouncedUpdate = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(updateZoomAndRegion, 100);
+    };
+
+    // Initial update
+    updateZoomAndRegion();
+
+    // Listen for zoom end and move end events (not continuous zoom)
+    mapInstance.on('zoomend', updateZoomAndRegion);
+    mapInstance.on('moveend', updateZoomAndRegion);
+    // Also update during zoom but debounced for smoother UX
+    mapInstance.on('zoom', debouncedUpdate);
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      mapInstance.off('zoomend', updateZoomAndRegion);
+      mapInstance.off('moveend', updateZoomAndRegion);
+      mapInstance.off('zoom', debouncedUpdate);
+    };
+  }, [map, mapLoaded, regions]);
+
+  // Helper to get centroid of a region geometry
+  function getRegionCentroid(geom: any): [number, number] | null {
+    let coords: number[][];
+    if (geom.type === 'Polygon') {
+      coords = geom.coordinates[0];
+    } else if (geom.type === 'MultiPolygon') {
+      coords = geom.coordinates[0][0];
+    } else {
+      return null;
+    }
+
+    let sumLng = 0, sumLat = 0;
+    for (const coord of coords) {
+      sumLng += coord[0];
+      sumLat += coord[1];
+    }
+    return [sumLng / coords.length, sumLat / coords.length];
+  }
+
+  // Helper function to check if a point is inside a region polygon
+  function isPointInRegion(point: [number, number], geom: any): boolean {
+    const [x, y] = point;
+
+    let coordinates: number[][][];
+    if (geom.type === 'Polygon') {
+      coordinates = [geom.coordinates[0]];
+    } else if (geom.type === 'MultiPolygon') {
+      coordinates = geom.coordinates.map((poly: number[][][]) => poly[0]);
+    } else {
+      return false;
+    }
+
+    for (const ring of coordinates) {
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const xi = ring[i][0], yi = ring[i][1];
+        const xj = ring[j][0], yj = ring[j][1];
+
+        if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+          inside = !inside;
+        }
+      }
+      if (inside) return true;
+    }
+    return false;
+  }
 
   // Create city markers when cities data is available and map is loaded
   useEffect(() => {
@@ -65,7 +216,7 @@ export default function FloridaMap() {
     setPopupMarkerElement(null);
 
     const currentZoom = map.current.getZoom();
-    const initialOpacity = getLabelOpacity(currentZoom);
+    const initialVisibility = getMarkerVisibility(currentZoom);
 
     cities.forEach((city) => {
       if (!city.geom || city.geom.type !== 'Point') return;
@@ -78,9 +229,12 @@ export default function FloridaMap() {
       el.dataset.cityId = city.id;
       el.style.cssText = `
         cursor: pointer;
-        display: flex;
+        display: ${initialVisibility.visible ? 'flex' : 'none'};
         flex-direction: column;
         align-items: center;
+        opacity: ${initialVisibility.opacity};
+        transition: opacity 0.4s ease;
+        pointer-events: ${initialVisibility.visible ? 'auto' : 'none'};
       `;
 
       // Create label element
@@ -94,10 +248,10 @@ export default function FloridaMap() {
         font-weight: 500;
         text-shadow: 0 0 6px rgba(0,0,0,0.9), 0 2px 8px rgba(0,0,0,0.6);
         pointer-events: none;
-        margin-bottom: 3px;
+        margin-bottom: 4px;
         padding: 2px;
         transition: opacity 0.3s ease, transform 0.15s ease;
-        opacity: ${initialOpacity};
+        opacity: ${initialVisibility.opacity};
         transform: scale(${getLabelScale(currentZoom)});
         transform-origin: center bottom;
       `;
@@ -105,13 +259,14 @@ export default function FloridaMap() {
 
       // Create marker dot
       const dotEl = document.createElement('div');
+      dotEl.className = 'marker-dot';
       dotEl.style.cssText = `
-        width: 8px;
-        height: 8px;
+        width: 10px;
+        height: 10px;
         background-color: white;
         border-radius: 50%;
         box-shadow: 0 0 0 2px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.5);
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.4s ease;
         pointer-events: auto;
         cursor: pointer;
       `;
@@ -126,11 +281,19 @@ export default function FloridaMap() {
         setPopupCityId(prev => {
           const newPopupId = prev === city.id ? null : city.id;
 
-          // Reset z-index on previously open marker's wrapper
+          // Reset z-index and dot state on previously open marker
           if (prev && prev !== city.id) {
             const prevMarkerEl = markerElements.current.get(prev);
-            if (prevMarkerEl?.parentElement) {
-              prevMarkerEl.parentElement.style.zIndex = '';
+            if (prevMarkerEl) {
+              if (prevMarkerEl.parentElement) {
+                prevMarkerEl.parentElement.style.zIndex = '';
+              }
+              // Reset previous marker's dot to normal state
+              const prevDot = prevMarkerEl.querySelector('div:last-child') as HTMLElement;
+              if (prevDot) {
+                prevDot.style.transform = 'scale(1)';
+                prevDot.style.boxShadow = '0 0 0 2px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.5)';
+              }
             }
           }
 
@@ -140,6 +303,9 @@ export default function FloridaMap() {
             if (el.parentElement) {
               el.parentElement.style.zIndex = '1000';
             }
+            // Keep dot in selected/hovered state
+            dotEl.style.transform = 'scale(1.3)';
+            dotEl.style.boxShadow = '0 0 0 3px rgba(255,255,255,0.5), 0 2px 8px rgba(0,0,0,0.6)';
           } else {
             setPopupMarkerElement(null);
             if (map.current) {
@@ -150,6 +316,9 @@ export default function FloridaMap() {
             if (el.parentElement) {
               el.parentElement.style.zIndex = '';
             }
+            // Reset dot to normal state
+            dotEl.style.transform = 'scale(1)';
+            dotEl.style.boxShadow = '0 0 0 2px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.5)';
           }
 
           return newPopupId;
@@ -181,17 +350,23 @@ export default function FloridaMap() {
     // Capture map instance for cleanup
     const mapInstance = map.current;
 
-    // Update label opacity and scale on zoom
+    // Update marker visibility, label opacity and scale on zoom
     const handleZoom = () => {
       if (!mapInstance) return;
       const zoom = mapInstance.getZoom();
-      const opacity = getLabelOpacity(zoom);
+      const visibility = getMarkerVisibility(zoom);
       const scale = getLabelScale(zoom);
 
       markerElements.current.forEach((el, cityId) => {
+        // Show/hide markers based on zoom level
+        el.style.display = visibility.visible ? 'flex' : 'none';
+        el.style.opacity = `${visibility.opacity}`;
+        el.style.pointerEvents = visibility.visible ? 'auto' : 'none';
+
         const label = el.querySelector('.marker-label') as HTMLElement;
-        if (label && cityId !== popupCityId) {
-          label.style.opacity = `${opacity}`;
+        // Use ref to get current popupCityId without triggering effect re-run
+        if (label && cityId !== popupCityIdRef.current) {
+          label.style.opacity = `${visibility.opacity}`;
           label.style.transform = `scale(${scale})`;
         }
       });
@@ -202,7 +377,7 @@ export default function FloridaMap() {
     return () => {
       mapInstance.off('zoom', handleZoom);
     };
-  }, [cities, mapLoaded, map, popupCityId]);
+  }, [cities, mapLoaded, map]);
 
   // Update connecting line position
   useEffect(() => {
@@ -262,6 +437,12 @@ export default function FloridaMap() {
           label.style.opacity = `${getLabelOpacity(zoom)}`;
           label.style.display = 'block';
         }
+        // Reset dot to normal state
+        const dot = popupMarkerElement.querySelector('div:last-child') as HTMLElement;
+        if (dot) {
+          dot.style.transform = 'scale(1)';
+          dot.style.boxShadow = '0 0 0 2px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.5)';
+        }
         if (popupMarkerElement.parentElement) {
           popupMarkerElement.parentElement.style.zIndex = '';
         }
@@ -315,6 +496,22 @@ export default function FloridaMap() {
           }
         }
       `}</style>
+
+      {/* Region Indicator - Attached to top center */}
+      <div
+        className={`absolute top-0 left-1/2 -translate-x-1/2 z-30 transition-all duration-300 ease-out ${
+          showRegionIndicator && currentRegion
+            ? 'opacity-100 translate-y-0'
+            : 'opacity-0 -translate-y-full pointer-events-none'
+        }`}
+      >
+        <div className="bg-background/95 backdrop-blur-sm px-5 py-2.5 rounded-b-lg shadow-lg border-x border-b border-primary/40 flex items-center gap-2">
+          <Hexagon className="w-4 h-4 text-primary" />
+          <span className="text-sm font-medium text-white tracking-wide">
+            {currentRegion}
+          </span>
+        </div>
+      </div>
 
       {/* Map Container */}
       <div className="absolute inset-0">
@@ -374,6 +571,12 @@ export default function FloridaMap() {
                         label.style.opacity = `${getLabelOpacity(zoom)}`;
                         label.style.display = 'block';
                       }
+                      // Reset dot to normal state
+                      const dot = popupMarkerElement.querySelector('div:last-child') as HTMLElement;
+                      if (dot) {
+                        dot.style.transform = 'scale(1)';
+                        dot.style.boxShadow = '0 0 0 2px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.5)';
+                      }
                       if (popupMarkerElement.parentElement) {
                         popupMarkerElement.parentElement.style.zIndex = '';
                       }
@@ -430,9 +633,9 @@ export default function FloridaMap() {
 
         {/* Loading overlay */}
         <div
-          className={`absolute inset-0 bg-p10-dark flex flex-col items-center justify-center gap-4 z-10 transition-opacity duration-500 ${isLoading ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+          className={`absolute inset-0 bg-p10-dark flex flex-col items-center justify-center gap-4 z-10 transition-opacity duration-300 ${isLoading ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
         >
-          <Spinner />
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
           <p className="text-p10-text-muted text-sm">Loading map...</p>
         </div>
 

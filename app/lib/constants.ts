@@ -108,11 +108,18 @@ export const REGION_CONFIG = {
   ZOOM_DURATION: 1800,
   ZOOM_CURVE: 1.42,
 
-  // Visibility zoom levels
+  // Region visibility zoom levels
   MIN_ZOOM_VISIBLE: 5,      // Start showing regions at this zoom level
-  MAX_ZOOM_VISIBLE: 6.0,    // Regions fully visible until this zoom
-  FADE_OUT_START: 6.0,      // Start fading out at this zoom
-  FADE_OUT_END: 7.5,        // Completely invisible after this zoom
+  MAX_ZOOM_VISIBLE: 7.0,    // Regions fully visible until this zoom
+  FADE_OUT_START: 7.0,      // Start fading out region fill at this zoom
+  FADE_OUT_END: 8.5,        // Region fill completely invisible after this zoom
+
+  // City markers zoom levels (appear after user zooms into region)
+  CITY_MARKERS_START: 8.0,  // City markers start appearing
+  CITY_MARKERS_FULL: 9.0,   // City markers fully visible
+
+  // Current region indicator zoom threshold
+  REGION_INDICATOR_ZOOM: 8.0, // Show region name indicator when zoomed past this
 
   // Transition timings
   FILL_TRANSITION_DURATION: 300,

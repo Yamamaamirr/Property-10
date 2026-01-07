@@ -73,13 +73,31 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
       try {
         const styleURL = getMapTilerStyleURL();
 
-        console.log('[MAP] Initializing map instance...');
+        // Responsive zoom and center based on screen size
+        const isMobile = window.innerWidth < 768;
+        const isTablet = window.innerWidth >= 768 && window.innerWidth < 1024;
+
+        // Adjust zoom based on screen size
+        let initialZoom = 5.8; // Default for laptop/desktop
+        if (isMobile) {
+          initialZoom = 5.0; // Mobile needs to fit Florida in portrait
+        } else if (isTablet) {
+          initialZoom = 5.5;
+        }
+
+        // Adjust center - shift west so Florida appears more to the right
+        let initialCenter: [number, number] = [-82.2, 27.6648]; // Desktop - shifted right
+        if (isMobile) {
+          initialCenter = [-83.5, 27.0]; // Mobile - shifted more right and south for portrait
+        }
+
+        console.log('[MAP] Initializing map instance...', { isMobile, isTablet, initialZoom });
         // Initialize map
         const mapInstance = new maplibregl.Map({
           container: mapContainer.current,
           style: styleURL,
-          center: MAP_CONFIG.INITIAL_CENTER,
-          zoom: MAP_CONFIG.INITIAL_ZOOM,
+          center: initialCenter,
+          zoom: initialZoom,
           minZoom: MAP_CONFIG.MIN_ZOOM,
           maxZoom: MAP_CONFIG.MAX_ZOOM,
           attributionControl: false
@@ -214,7 +232,7 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                   }
                 });
 
-                // Add regions border layer (fades as you zoom in)
+                // Add regions border layer (lighter, stays subtle when zoomed in)
                 map.current.addLayer({
                   id: 'regions-border',
                   type: 'line',
@@ -223,18 +241,23 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                     data: regionsGeoJSON as any
                   },
                   paint: {
-                    'line-color': '#76c8fe',
-                    'line-width': 1,
+                    'line-color': '#76C8FE',
+                    'line-width': [
+                      'interpolate',
+                      ['linear'],
+                      ['zoom'],
+                      REGION_CONFIG.MIN_ZOOM_VISIBLE, 2,
+                      REGION_CONFIG.FADE_OUT_END, 1.5,
+                      12, 1
+                    ],
                     'line-opacity': [
                       'interpolate',
                       ['linear'],
                       ['zoom'],
-                      REGION_CONFIG.MIN_ZOOM_VISIBLE, // At zoom 5
-                      1, // visible when zoomed out
-                      REGION_CONFIG.FADE_OUT_START, // At zoom 6.0
-                      1, // still visible
-                      REGION_CONFIG.FADE_OUT_END, // At zoom 6.8
-                      0 // completely transparent when zoomed in
+                      REGION_CONFIG.MIN_ZOOM_VISIBLE, 0.7,
+                      REGION_CONFIG.FADE_OUT_START, 0.7,
+                      REGION_CONFIG.FADE_OUT_END, 0.3,
+                      12, 0.2
                     ]
                   }
                 });
