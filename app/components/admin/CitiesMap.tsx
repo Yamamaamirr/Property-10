@@ -62,26 +62,27 @@ export default function CitiesMap({ cities, selectedCityId, onCityClick, sheetOp
     // Add pitch based on zoom level for better visual effect
     // Track touch state to avoid interrupting mobile pinch gestures
     let isTouching = false;
+    let currentPitch = 0;
+
+    const getTargetPitch = (zoom: number) => zoom > 11 ? Math.min(45, (zoom - 11) * 15) : 0;
 
     mapInstance.on('touchstart', () => { isTouching = true; });
     mapInstance.on('touchend', () => {
       isTouching = false;
-      // Update pitch after touch gesture ends
+      // Only update pitch if it actually changed significantly
       const zoom = mapInstance.getZoom();
-      const targetPitch = zoom > 11 ? Math.min(45, (zoom - 11) * 15) : 0;
-      mapInstance.setPitch(targetPitch);
+      const targetPitch = getTargetPitch(zoom);
+      if (Math.abs(targetPitch - currentPitch) > 1) {
+        currentPitch = targetPitch;
+        mapInstance.easeTo({ pitch: targetPitch, duration: 500 });
+      }
     });
 
     mapInstance.on('zoom', () => {
       if (isTouching) return; // Skip during touch gestures to avoid interrupting pinch
       const zoom = mapInstance.getZoom();
-      let targetPitch = 0;
-
-      if (zoom > 11) {
-        // Gradually increase pitch from zoom 11 to 14
-        targetPitch = Math.min(45, (zoom - 11) * 15);
-      }
-
+      const targetPitch = getTargetPitch(zoom);
+      currentPitch = targetPitch;
       mapInstance.setPitch(targetPitch);
     });
 
