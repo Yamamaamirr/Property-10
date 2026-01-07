@@ -241,23 +241,16 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                     data: regionsGeoJSON as any
                   },
                   paint: {
-                    'line-color': '#76C8FE',
-                    'line-width': [
-                      'interpolate',
-                      ['linear'],
-                      ['zoom'],
-                      REGION_CONFIG.MIN_ZOOM_VISIBLE, 2,
-                      REGION_CONFIG.FADE_OUT_END, 1.5,
-                      12, 1
-                    ],
+                    'line-color': '#76c8fe',
+                    'line-width': 1,
                     'line-opacity': [
                       'interpolate',
                       ['linear'],
                       ['zoom'],
-                      REGION_CONFIG.MIN_ZOOM_VISIBLE, 0.7,
-                      REGION_CONFIG.FADE_OUT_START, 0.7,
-                      REGION_CONFIG.FADE_OUT_END, 0.3,
-                      12, 0.2
+                      REGION_CONFIG.MIN_ZOOM_VISIBLE, 1,
+                      REGION_CONFIG.FADE_OUT_START, 1,
+                      REGION_CONFIG.FADE_OUT_END, 0.5,
+                      12, 0.3
                     ]
                   }
                 });
@@ -266,7 +259,8 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
               }
 
               // Add tilt/pitch logic based on zoom level (same as admin CitiesMap)
-              map.current.on('zoom', () => {
+              // Use zoomend instead of zoom to avoid interrupting mobile pinch gestures
+              map.current.on('zoomend', () => {
                 if (!map.current) return;
                 const zoom = map.current.getZoom();
                 let targetPitch = 0;
@@ -274,7 +268,7 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                   // Gradually increase pitch from 0 to 45 as zoom goes from 11 to 14
                   targetPitch = Math.min(45, (zoom - 11) * 15);
                 }
-                map.current.setPitch(targetPitch);
+                map.current.easeTo({ pitch: targetPitch, duration: 300 });
               });
               console.log('[MAP] ✓ Added zoom-based tilt logic');
             } catch (dataError) {

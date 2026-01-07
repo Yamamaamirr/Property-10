@@ -60,7 +60,8 @@ export default function CitiesMap({ cities, selectedCityId, onCityClick, sheetOp
     map.current = mapInstance;
 
     // Add pitch based on zoom level for better visual effect (same as add dialog)
-    mapInstance.on('zoom', () => {
+    // Use zoomend instead of zoom to avoid interrupting mobile pinch gestures
+    mapInstance.on('zoomend', () => {
       const zoom = mapInstance.getZoom();
       let targetPitch = 0;
 
@@ -69,7 +70,7 @@ export default function CitiesMap({ cities, selectedCityId, onCityClick, sheetOp
         targetPitch = Math.min(45, (zoom - 11) * 15);
       }
 
-      mapInstance.setPitch(targetPitch);
+      mapInstance.easeTo({ pitch: targetPitch, duration: 300 });
     });
 
     mapInstance.on("load", async () => {
