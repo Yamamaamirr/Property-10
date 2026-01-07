@@ -60,27 +60,32 @@ export default function CitiesMap({ cities, selectedCityId, onCityClick, sheetOp
     map.current = mapInstance;
 
     // Add pitch based on zoom level for better visual effect
-    const getTargetPitch = (zoom: number) => zoom > 11 ? Math.min(45, (zoom - 11) * 15) : 0;
-
-    // On desktop (non-touch), update pitch in real-time during zoom
-    // On mobile, update pitch only when map becomes idle to avoid interrupting gestures
     const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
     if (isTouchDevice) {
-      // Mobile: update pitch when map is idle (after all interactions complete)
+      // Mobile: simple binary tilt - flat below zoom 12, tilted above
+      const MOBILE_TILT_THRESHOLD = 12;
+      const MOBILE_TILT_ANGLE = 40;
+      let isTilted = false;
+
       mapInstance.on('idle', () => {
         const zoom = mapInstance.getZoom();
-        const targetPitch = getTargetPitch(zoom);
-        const currentPitch = mapInstance.getPitch();
-        if (Math.abs(targetPitch - currentPitch) > 0.5) {
-          mapInstance.easeTo({ pitch: targetPitch, duration: 300 });
+        const shouldTilt = zoom >= MOBILE_TILT_THRESHOLD;
+
+        // Only animate if state changed
+        if (shouldTilt && !isTilted) {
+          isTilted = true;
+          mapInstance.easeTo({ pitch: MOBILE_TILT_ANGLE, duration: 400 });
+        } else if (!shouldTilt && isTilted) {
+          isTilted = false;
+          mapInstance.easeTo({ pitch: 0, duration: 400 });
         }
       });
     } else {
-      // Desktop: real-time pitch updates during zoom
+      // Desktop: real-time gradual pitch updates during zoom
       mapInstance.on('zoom', () => {
         const zoom = mapInstance.getZoom();
-        const targetPitch = getTargetPitch(zoom);
+        const targetPitch = zoom > 11 ? Math.min(45, (zoom - 11) * 15) : 0;
         mapInstance.setPitch(targetPitch);
       });
     }
