@@ -375,6 +375,7 @@ export default function RegionsPage() {
     }, 300);
 
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showPreviewModal, editableRegions]);
 
   // Initialize edit map when dialog opens

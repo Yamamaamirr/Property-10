@@ -81,7 +81,6 @@ export default function FloridaMap() {
   const lineRef = useRef<SVGLineElement>(null);
   const popupCityIdRef = useRef<string | null>(null);
   const [expandedCluster, setExpandedCluster] = useState<{ lng: number; lat: number; cities: City[] } | null>(null);
-  const mapContainerDiv = useRef<HTMLDivElement | null>(null);
 
   // Preferences state - maximum 2 cities
   const [preferredCities, setPreferredCities] = useState<City[]>([]);
@@ -446,6 +445,10 @@ export default function FloridaMap() {
 
     // Click handler for individual points - modern sequence: zoom → highlight → popup
     const pointClickHandler = (e: maplibregl.MapMouseEvent) => {
+      // Prevent click from bubbling to region layer
+      e.preventDefault();
+      e.originalEvent.stopPropagation();
+
       const features = mapInstance.queryRenderedFeatures(e.point, {
         layers: ['unclustered-point']
       });
@@ -763,7 +766,7 @@ export default function FloridaMap() {
         const popupCenterX = popup.left - container.left + popup.width / 2;
         const popupBottom = popup.bottom - container.top;
 
-        // Draw vertical beam from popup bottom to marker
+        // Draw dotted line from popup bottom to marker
         line.setAttribute("x1", popupCenterX.toString());
         line.setAttribute("y1", popupBottom.toString());
         line.setAttribute("x2", markerX.toString());
@@ -942,39 +945,40 @@ export default function FloridaMap() {
       {/* Map Container */}
       <div className="absolute inset-0">
         <div
-          ref={(el) => {
-            mapContainer.current = el;
-            mapContainerDiv.current = el;
-          }}
+          ref={mapContainer}
           className="w-full h-full relative"
         >
-          {/* Elegant vertical beam connecting popup to marker */}
+          {/* Shiny ribbon line connecting popup to marker */}
           {popupCityId && (
             <svg
               className="absolute inset-0 pointer-events-none z-[9998]"
               style={{ width: "100%", height: "100%" }}
             >
               <defs>
-                <linearGradient id="beamGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stopColor="#00d4ff" stopOpacity="0" />
-                  <stop offset="20%" stopColor="#00d4ff" stopOpacity="0.3" />
-                  <stop offset="80%" stopColor="#00d4ff" stopOpacity="0.3" />
-                  <stop offset="100%" stopColor="#00d4ff" stopOpacity="0" />
+                {/* Main gradient - light cyan with shine effect */}
+                <linearGradient id="ribbonGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor="#a8d8ea" stopOpacity="0.1" />
+                  <stop offset="30%" stopColor="#88c8d8" stopOpacity="0.4" />
+                  <stop offset="60%" stopColor="#7ac0d0" stopOpacity="0.5" />
+                  <stop offset="100%" stopColor="#6bb8c8" stopOpacity="0.6" />
                 </linearGradient>
-                <filter id="beamGlow">
-                  <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                {/* Glow filter for shiny effect */}
+                <filter id="ribbonGlow" x="-50%" y="-50%" width="200%" height="200%">
+                  <feGaussianBlur stdDeviation="2" result="glow"/>
                   <feMerge>
-                    <feMergeNode in="coloredBlur"/>
+                    <feMergeNode in="glow"/>
                     <feMergeNode in="SourceGraphic"/>
                   </feMerge>
                 </filter>
               </defs>
+              {/* Outer glow line */}
               <line
                 ref={lineRef}
-                stroke="url(#beamGradient)"
-                strokeWidth="5"
-                opacity="1"
-                filter="url(#beamGlow)"
+                stroke="url(#ribbonGradient)"
+                strokeWidth="3"
+                strokeLinecap="round"
+                filter="url(#ribbonGlow)"
+                opacity="0.8"
               />
             </svg>
           )}
@@ -1252,7 +1256,7 @@ export default function FloridaMap() {
               {/* Header */}
               <div className="px-4 pt-4 pb-3 md:px-6 md:pt-6 md:pb-4">
                 <h2 className="text-base md:text-xl font-semibold text-white mb-0.5">Get Started</h2>
-                <p className="text-xs md:text-sm text-white/60">Enter your details and we'll be in touch shortly.</p>
+                <p className="text-xs md:text-sm text-white/60">Enter your details and we&apos;ll be in touch shortly.</p>
               </div>
 
               {/* Selected Cities Preview */}

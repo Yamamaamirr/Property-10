@@ -19,6 +19,57 @@ import { fetchRegions } from '../lib/api/regions';
 import { fetchCities } from '../lib/api/cities';
 import type { Region, City } from '../lib/types';
 
+/**
+ * Point-in-polygon test using ray casting algorithm
+ * Returns true if point [lng, lat] is inside the polygon
+ */
+function pointInPolygon(point: [number, number], polygon: number[][]): boolean {
+  const [x, y] = point;
+  let inside = false;
+
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i];
+    const [xj, yj] = polygon[j];
+
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
+}
+
+/**
+ * Check if a point is inside a GeoJSON geometry (Polygon or MultiPolygon)
+ */
+function pointInGeometry(point: [number, number], geometry: any): boolean {
+  if (!geometry) return false;
+
+  if (geometry.type === 'Polygon') {
+    // For Polygon, check the outer ring (first array)
+    return pointInPolygon(point, geometry.coordinates[0]);
+  } else if (geometry.type === 'MultiPolygon') {
+    // For MultiPolygon, check if point is in any of the polygons
+    return geometry.coordinates.some((polygon: number[][][]) =>
+      pointInPolygon(point, polygon[0])
+    );
+  }
+
+  return false;
+}
+
+/**
+ * Find which region contains the given point
+ */
+function findRegionAtPoint(point: [number, number], regions: Region[]): Region | null {
+  for (const region of regions) {
+    if (region.geom && pointInGeometry(point, region.geom)) {
+      return region;
+    }
+  }
+  return null;
+}
+
 interface UseMapSetupProps {
   onError?: (error: Error) => void;
 }
@@ -214,47 +265,113 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                     }))
                 };
 
-                // Add regions fill layer (filled when zoomed out, fades as you zoom in)
-                // Will be dynamically updated on hover
+                // Add named source for regions with promoteId for feature-state support
+                map.current.addSource('regions', {
+                  type: 'geojson',
+                  data: regionsGeoJSON as any,
+                  promoteId: 'id'
+                });
+
+                // Add regions fill layer with feature-state based styling
+                // Progressive opacity: visible when zoomed out, fades as you zoom in
+                // Active region stays more visible
                 map.current.addLayer({
                   id: 'regions-fill',
                   type: 'fill',
-                  source: {
-                    type: 'geojson',
-                    data: regionsGeoJSON as any
-                  },
+                  source: 'regions',
                   paint: {
-                    'fill-color': '#4a9eff',
+                    'fill-color': [
+                      'case',
+                      ['boolean', ['feature-state', 'active'], false],
+                      '#1e3a5f', // Active: deep navy blue (professional)
+                      '#1a2e4a'  // Inactive: darker navy
+                    ],
                     'fill-opacity': [
                       'interpolate',
                       ['linear'],
                       ['zoom'],
-                      REGION_CONFIG.MIN_ZOOM_VISIBLE, 0.25,
-                      REGION_CONFIG.FADE_OUT_START, 0.25,
-                      REGION_CONFIG.FADE_OUT_END, 0
+                      REGION_CONFIG.MIN_ZOOM_VISIBLE, [
+                        'case',
+                        ['boolean', ['feature-state', 'active'], false],
+                        0.35, // Active: visible
+                        0.2   // Inactive: subtle
+                      ],
+                      REGION_CONFIG.FADE_OUT_START, [
+                        'case',
+                        ['boolean', ['feature-state', 'active'], false],
+                        0.2,  // Active: still visible
+                        0.08  // Inactive: fading
+                      ],
+                      REGION_CONFIG.FADE_OUT_END, [
+                        'case',
+                        ['boolean', ['feature-state', 'active'], false],
+                        0.1,  // Active: subtle hint
+                        0     // Inactive: gone
+                      ],
+                      10, 0 // All gone at high zoom
                     ]
                   }
                 });
 
-                // Add regions border layer
+                // Add regions border layer with feature-state based styling
+                // Active region has stronger border, inactive regions fade
+                // Using muted, professional colors from the theme
                 map.current.addLayer({
                   id: 'regions-border',
                   type: 'line',
-                  source: {
-                    type: 'geojson',
-                    data: regionsGeoJSON as any
-                  },
+                  source: 'regions',
                   paint: {
-                    'line-color': '#76c8fe',
-                    'line-width': 1,
+                    'line-color': [
+                      'case',
+                      ['boolean', ['feature-state', 'active'], false],
+                      '#5A9FD4', // Active: muted cyan-blue (REGION_BORDER from theme)
+                      '#3d5a80'  // Inactive: slate blue (professional, subtle)
+                    ],
+                    'line-width': [
+                      'interpolate',
+                      ['linear'],
+                      ['zoom'],
+                      5, [
+                        'case',
+                        ['boolean', ['feature-state', 'active'], false],
+                        1.5,
+                        0.8
+                      ],
+                      8, [
+                        'case',
+                        ['boolean', ['feature-state', 'active'], false],
+                        2,
+                        0.6
+                      ],
+                      10, [
+                        'case',
+                        ['boolean', ['feature-state', 'active'], false],
+                        1.5,
+                        0.4
+                      ]
+                    ],
                     'line-opacity': [
                       'interpolate',
                       ['linear'],
                       ['zoom'],
-                      REGION_CONFIG.MIN_ZOOM_VISIBLE, 0.8,
-                      REGION_CONFIG.FADE_OUT_START, 0.8,
-                      REGION_CONFIG.FADE_OUT_END, 0.4,
-                      12, 0.2
+                      REGION_CONFIG.MIN_ZOOM_VISIBLE, [
+                        'case',
+                        ['boolean', ['feature-state', 'active'], false],
+                        0.85,
+                        0.5
+                      ],
+                      8, [
+                        'case',
+                        ['boolean', ['feature-state', 'active'], false],
+                        0.7,
+                        0.25
+                      ],
+                      12, [
+                        'case',
+                        ['boolean', ['feature-state', 'active'], false],
+                        0.5,
+                        0.1
+                      ]
                     ]
                   }
                 });
@@ -388,13 +505,13 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                 map.current.on('click', 'regions-fill', (e) => {
                   if (!map.current || !e.features || e.features.length === 0) return;
 
-                  // CRITICAL: Check if click was on a cluster - if so, let cluster handler deal with it
-                  // This prevents region selection from interfering with cluster expansion
-                  const clusterFeatures = map.current.queryRenderedFeatures(e.point, {
-                    layers: ['clusters-inner', 'clusters-outer']
+                  // CRITICAL: Check if click was on a cluster or city marker - if so, let those handlers deal with it
+                  // This prevents region selection from interfering with cluster expansion or city popups
+                  const interactiveFeatures = map.current.queryRenderedFeatures(e.point, {
+                    layers: ['clusters-inner', 'clusters-outer', 'unclustered-point']
                   });
-                  if (clusterFeatures.length > 0) {
-                    console.log('[REGION] Click was on cluster, ignoring region click');
+                  if (interactiveFeatures.length > 0) {
+                    console.log('[REGION] Click was on cluster/marker, ignoring region click');
                     return;
                   }
 
@@ -432,23 +549,28 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
 
                   console.log('[REGION] Switching to region, fitting bounds...');
 
-                  // Remove fill from all regions (show basemap)
-                  map.current.setPaintProperty('regions-fill', 'fill-opacity', 0);
+                  // Use feature-state to mark the selected region as active
+                  // First clear any previous active states
+                  regionsData.forEach(region => {
+                    try {
+                      map.current!.setFeatureState(
+                        { source: 'regions', id: region.id },
+                        { active: false }
+                      );
+                    } catch (e) {
+                      // Ignore
+                    }
+                  });
 
-                  // Selected region gets darker cyan border, others get subtle grey
-                  map.current.setPaintProperty('regions-border', 'line-color', [
-                    'case',
-                    ['==', ['get', 'id'], regionId],
-                    '#3aa7d4', // Darker cyan for selected region
-                    '#6b7280'  // Subtle grey for other regions
-                  ]);
-
-                  map.current.setPaintProperty('regions-border', 'line-width', [
-                    'case',
-                    ['==', ['get', 'id'], regionId],
-                    2, // Moderate border for selected
-                    0.8  // Thin subtle border for others
-                  ]);
+                  // Set the clicked region as active
+                  try {
+                    map.current.setFeatureState(
+                      { source: 'regions', id: regionId },
+                      { active: true }
+                    );
+                  } catch (e) {
+                    // Ignore
+                  }
 
                   // Get the bounds from the clicked region's geometry
                   // Use the region object's geometry (not feature.geometry) for consistent results
@@ -499,135 +621,116 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                   }, 1300);
                 });
 
-                // Auto-detect region when user manually zooms/pans (for intuitive UX)
+                // Auto-detect region based on map center (simple, intuitive UX)
+                // Using feature-state for smooth progressive styling
                 let autoFocusedRegionId: string | null = null;
-                const ZOOM_THRESHOLD = 7.2; // Start auto-detecting at this zoom level
+                const ZOOM_THRESHOLD = 7.8; // Only highlight when actually exploring a region
+
+                // Helper to set feature state for a region
+                const setRegionActive = (regionId: string | null, active: boolean) => {
+                  if (!map.current || !regionId) return;
+                  try {
+                    map.current.setFeatureState(
+                      { source: 'regions', id: regionId },
+                      { active }
+                    );
+                  } catch (e) {
+                    // Ignore errors if feature doesn't exist
+                  }
+                };
 
                 const updateAutoFocusRegion = () => {
                   if (!map.current) return;
 
                   const zoom = map.current.getZoom();
+                  const center = map.current.getCenter();
 
-                  // Only auto-focus if zoomed in enough and no region is explicitly selected
+                  // If zoomed out or region is explicitly selected, reset auto-focus
                   if (zoom < ZOOM_THRESHOLD || currentSelectedRegionId) {
-                    // Reset auto-focus if zoomed out or region is selected
                     if (autoFocusedRegionId && !currentSelectedRegionId) {
+                      // Clear previous active state
+                      setRegionActive(autoFocusedRegionId, false);
                       autoFocusedRegionId = null;
                       setAutoFocusedRegion(null);
-                      // Reset to default styles
-                      map.current.setPaintProperty('regions-fill', 'fill-opacity', 0.25);
-                      map.current.setPaintProperty('regions-fill', 'fill-color', '#4a9eff');
-                      map.current.setPaintProperty('regions-border', 'line-color', '#76c8fe');
-                      map.current.setPaintProperty('regions-border', 'line-width', 1);
+                      console.log('[REGION] Auto-focus cleared (zoomed out or region selected)');
                     }
                     return;
                   }
 
-                  // Sample multiple points to determine which region is most dominant
-                  const viewportWidth = map.current.getCanvas().width;
-                  const viewportHeight = map.current.getCanvas().height;
+                  // Find region containing the map center - simple and effective
+                  const centerPoint: [number, number] = [center.lng, center.lat];
+                  let focusedRegion = findRegionAtPoint(centerPoint, regionsData);
 
-                  // Sample points in a grid pattern
-                  const samplePoints = [];
-                  const gridSize = 5; // 5x5 grid = 25 sample points
+                  // If center is not inside any region, check nearby using rendered features
+                  // This handles boundary cases where user is at/near the edge
+                  if (!focusedRegion) {
+                    const centerPixel = map.current.project(center);
+                    // Query a small box around center (40px tolerance for boundaries)
+                    const tolerance = 40;
+                    const bbox: [maplibregl.PointLike, maplibregl.PointLike] = [
+                      [centerPixel.x - tolerance, centerPixel.y - tolerance],
+                      [centerPixel.x + tolerance, centerPixel.y + tolerance]
+                    ];
 
-                  for (let x = 0; x < gridSize; x++) {
-                    for (let y = 0; y < gridSize; y++) {
-                      samplePoints.push({
-                        x: (viewportWidth / (gridSize + 1)) * (x + 1),
-                        y: (viewportHeight / (gridSize + 1)) * (y + 1)
-                      });
-                    }
-                  }
-
-                  // Count which region appears at each sample point
-                  const regionCounts: { [key: string]: { count: number; name: string } } = {};
-
-                  samplePoints.forEach(point => {
-                    const features = map.current!.queryRenderedFeatures([point.x, point.y], {
+                    const nearbyFeatures = map.current.queryRenderedFeatures(bbox, {
                       layers: ['regions-fill']
                     });
 
-                    if (features && features.length > 0) {
-                      const id = features[0].properties?.id;
-                      const name = features[0].properties?.name;
-                      if (id) {
-                        if (!regionCounts[id]) {
-                          regionCounts[id] = { count: 0, name: name || '' };
+                    if (nearbyFeatures.length > 0) {
+                      // Find the closest region by checking which appears most in the query
+                      const regionCounts: { [id: string]: number } = {};
+                      nearbyFeatures.forEach(f => {
+                        const id = f.properties?.id;
+                        if (id) regionCounts[id] = (regionCounts[id] || 0) + 1;
+                      });
+
+                      // Get the most frequent region
+                      let maxCount = 0;
+                      let nearestRegionId: string | null = null;
+                      Object.entries(regionCounts).forEach(([id, count]) => {
+                        if (count > maxCount) {
+                          maxCount = count;
+                          nearestRegionId = id;
                         }
-                        regionCounts[id].count++;
+                      });
+
+                      if (nearestRegionId) {
+                        focusedRegion = regionsData.find(r => r.id === nearestRegionId) || null;
                       }
                     }
-                  });
+                  }
 
-                  // Find the dominant region
-                  let maxCount = 0;
-                  let dominantRegionId: string | null = null;
-                  let secondMaxCount = 0;
-
-                  Object.entries(regionCounts).forEach(([id, data]) => {
-                    if (data.count > maxCount) {
-                      secondMaxCount = maxCount;
-                      maxCount = data.count;
-                      dominantRegionId = id;
-                    } else if (data.count > secondMaxCount) {
-                      secondMaxCount = data.count;
-                    }
-                  });
-
-                  // Only highlight if:
-                  // 1. A region is found
-                  // 2. It occupies at least 40% of sample points (10 out of 25)
-                  // 3. It's at least 2x more visible than the second region (or second doesn't exist)
-                  const minSamples = Math.floor(samplePoints.length * 0.4);
-                  const isDominant = dominantRegionId &&
-                                     maxCount >= minSamples &&
-                                     (secondMaxCount === 0 || maxCount >= secondMaxCount * 2);
-
-                  if (isDominant && dominantRegionId) {
+                  if (focusedRegion) {
                     // Only update if the focused region changed
-                    if (dominantRegionId !== autoFocusedRegionId) {
-                      autoFocusedRegionId = dominantRegionId;
+                    if (focusedRegion.id !== autoFocusedRegionId) {
+                      // Clear previous active state
+                      if (autoFocusedRegionId) {
+                        setRegionActive(autoFocusedRegionId, false);
+                      }
 
-                      console.log('[REGION] Auto-focused region:', regionCounts[dominantRegionId].name,
-                                  `(${maxCount}/${samplePoints.length} samples)`);
+                      // Set new active state
+                      autoFocusedRegionId = focusedRegion.id;
+                      setRegionActive(focusedRegion.id, true);
+                      setAutoFocusedRegion(focusedRegion);
 
-                      // Update state with the full region object
-                      const focusedRegion = regionsData.find(r => r.id === dominantRegionId);
-                      setAutoFocusedRegion(focusedRegion || null);
-
-                      // Apply same styling as click selection - no fill, prominent border
-                      map.current.setPaintProperty('regions-fill', 'fill-opacity', 0);
-
-                      map.current.setPaintProperty('regions-border', 'line-color', [
-                        'case',
-                        ['==', ['get', 'id'], autoFocusedRegionId],
-                        '#3aa7d4', // Darker cyan for auto-focused region (same as selected)
-                        '#6b7280'  // Subtle grey for other regions
-                      ]);
-
-                      map.current.setPaintProperty('regions-border', 'line-width', [
-                        'case',
-                        ['==', ['get', 'id'], autoFocusedRegionId],
-                        2, // Moderate border for auto-focused (same as selected)
-                        0.8  // Thin subtle border for others
-                      ]);
+                      console.log('[REGION] Auto-focused region:', focusedRegion.name,
+                                  `(center: ${center.lng.toFixed(3)}, ${center.lat.toFixed(3)})`);
                     }
                   } else if (autoFocusedRegionId) {
-                    // Not dominant enough - reset
-                    console.log('[REGION] No clearly dominant region');
+                    // Center is not in or near any region - clear focus
+                    setRegionActive(autoFocusedRegionId, false);
                     autoFocusedRegionId = null;
                     setAutoFocusedRegion(null);
-                    map.current.setPaintProperty('regions-fill', 'fill-opacity', 0.25);
-                    map.current.setPaintProperty('regions-fill', 'fill-color', '#4a9eff');
-                    map.current.setPaintProperty('regions-border', 'line-color', '#76c8fe');
-                    map.current.setPaintProperty('regions-border', 'line-width', 1);
+                    console.log('[REGION] Auto-focus cleared (center outside regions)');
                   }
                 };
 
-                // Listen to map movement and zoom changes
+                // Listen to map movement - use 'move' for smooth updates, throttled naturally by MapLibre
                 map.current.on('moveend', updateAutoFocusRegion);
                 map.current.on('zoomend', updateAutoFocusRegion);
+
+                // Initial check
+                updateAutoFocusRegion();
               }
 
               // Add tilt/pitch logic based on zoom level (same as admin CitiesMap)
@@ -764,24 +867,31 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
 
     console.log('[REGION] Programmatically selecting region:', region.name);
 
+    // Clear previous selection's active state if any
+    if (selectedRegion && selectedRegion.id !== region.id) {
+      try {
+        map.current.setFeatureState(
+          { source: 'regions', id: selectedRegion.id },
+          { active: false }
+        );
+      } catch (e) {
+        // Ignore
+      }
+    }
+
     // Set selected region state
     setSelectedRegion(region);
 
-    // Update region styling to show selection
-    map.current.setPaintProperty('regions-fill', 'fill-opacity', 0);
-    map.current.setPaintProperty('regions-border', 'line-color', [
-      'case',
-      ['==', ['get', 'id'], region.id],
-      '#3aa7d4',
-      '#6b7280'
-    ]);
-    map.current.setPaintProperty('regions-border', 'line-width', [
-      'case',
-      ['==', ['get', 'id'], region.id],
-      2,
-      0.8
-    ]);
-  }, []);
+    // Set the region as active using feature-state
+    try {
+      map.current.setFeatureState(
+        { source: 'regions', id: region.id },
+        { active: true }
+      );
+    } catch (e) {
+      // Ignore if feature doesn't exist
+    }
+  }, [selectedRegion]);
 
   // Function to deselect region and return to default view
   const deselectRegion = useCallback(() => {
@@ -789,14 +899,18 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
 
     console.log('[REGION] Deselecting region, returning to default view');
 
+    // Clear the active feature-state from the selected region
+    try {
+      map.current.setFeatureState(
+        { source: 'regions', id: selectedRegion.id },
+        { active: false }
+      );
+    } catch (e) {
+      // Ignore if feature doesn't exist
+    }
+
     // Reset selected region state
     setSelectedRegion(null);
-
-    // Restore all regions to default appearance
-    map.current.setPaintProperty('regions-fill', 'fill-color', '#4a9eff');
-    map.current.setPaintProperty('regions-fill', 'fill-opacity', 0.25);
-    map.current.setPaintProperty('regions-border', 'line-color', '#76c8fe');
-    map.current.setPaintProperty('regions-border', 'line-width', 1);
 
     // Emit a custom event to reset the local selected region ID
     map.current.fire('region-deselected' as any);
