@@ -351,7 +351,7 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                     'text-transform': 'uppercase'
                   },
                   paint: {
-                    'text-color': '#e8e8e8', // Light grey-white for modern look
+                    'text-color': '#e8e8e8',
                     'text-halo-color': 'rgba(0, 0, 0, 0.75)',
                     'text-halo-width': 2,
                     'text-halo-blur': 0.8,
@@ -359,12 +359,11 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                       'interpolate',
                       ['linear'],
                       ['zoom'],
-                      5, 0.85,    // Clearly visible when zoomed out
-                      7, 1.0,     // Peak visibility
-                      9, 0.8,     // Still visible
-                      11, 0.5,    // Fade out as cities appear
-                      12, 0.2,    // Very subtle
-                      13, 0       // Invisible
+                      5, 0.85,
+                      6.5, 1.0,   // Peak visibility
+                      8, 0.6,     // Start fading when entering region
+                      9, 0.3,     // Mostly faded
+                      10, 0       // Gone - let city markers take over
                     ]
                   }
                 });
@@ -388,6 +387,16 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                 // Click region to zoom into it and enter focus mode
                 map.current.on('click', 'regions-fill', (e) => {
                   if (!map.current || !e.features || e.features.length === 0) return;
+
+                  // CRITICAL: Check if click was on a cluster - if so, let cluster handler deal with it
+                  // This prevents region selection from interfering with cluster expansion
+                  const clusterFeatures = map.current.queryRenderedFeatures(e.point, {
+                    layers: ['clusters-inner', 'clusters-outer']
+                  });
+                  if (clusterFeatures.length > 0) {
+                    console.log('[REGION] Click was on cluster, ignoring region click');
+                    return;
+                  }
 
                   // Stop event propagation
                   e.preventDefault();

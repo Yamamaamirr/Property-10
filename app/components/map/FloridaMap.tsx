@@ -10,6 +10,27 @@ import Image from 'next/image';
 import type { City } from '@/app/lib/types';
 import { REGION_CONFIG } from '@/app/lib/constants';
 
+// Fallback images for cities without custom images
+const CITY_FALLBACK_IMAGES = [
+  "https://images.unsplash.com/photo-1535498730771-e735b998cd64?w=800&auto=format&fit=crop", // Miami skyline
+  "https://images.unsplash.com/photo-1564507592333-c60657eea523?w=800&auto=format&fit=crop", // Beach sunset
+  "https://images.unsplash.com/photo-1506929562872-bb421503ef21?w=800&auto=format&fit=crop", // Palm trees beach
+  "https://images.unsplash.com/photo-1548574505-5e239809ee19?w=800&auto=format&fit=crop", // Florida sunset
+  "https://images.unsplash.com/photo-1605723517503-3cadb5818a0c?w=800&auto=format&fit=crop", // Coastal view
+  "https://images.unsplash.com/photo-1499793983690-e29da59ef1c2?w=800&auto=format&fit=crop", // Beach house
+];
+
+// Get a consistent fallback image for a city based on its name
+const getCityFallbackImage = (cityName: string): string => {
+  let hash = 0;
+  for (let i = 0; i < cityName.length; i++) {
+    hash = ((hash << 5) - hash) + cityName.charCodeAt(i);
+    hash = hash & hash;
+  }
+  const index = Math.abs(hash) % CITY_FALLBACK_IMAGES.length;
+  return CITY_FALLBACK_IMAGES[index];
+};
+
 // Helper function for marker visibility based on zoom (appears after entering region)
 const getMarkerVisibility = (zoom: number): { opacity: number; visible: boolean } => {
   if (zoom < REGION_CONFIG.CITY_MARKERS_START) {
@@ -64,6 +85,15 @@ export default function FloridaMap() {
 
   // Preferences state - maximum 2 cities
   const [preferredCities, setPreferredCities] = useState<City[]>([]);
+
+  // Contact form modal state
+  const [showContactForm, setShowContactForm] = useState(false);
+  const [contactForm, setContactForm] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: ''
+  });
 
   // Current zoom state
   const [currentZoom, setCurrentZoom] = useState<number>(5);
@@ -134,43 +164,59 @@ export default function FloridaMap() {
     const mapInstance = map.current;
 
     // Convert cities to GeoJSON format (include lng/lat as properties for conditional styling)
+    const validCities = cities.filter(city => city.geom && city.geom.type === 'Point');
+    console.log('[MARKERS] Total cities:', cities.length, 'Valid cities with Point geometry:', validCities.length);
+
+    // Log any cities that don't have valid Point geometry
+    const invalidCities = cities.filter(city => !city.geom || city.geom.type !== 'Point');
+    if (invalidCities.length > 0) {
+      console.warn('[MARKERS] Cities without valid Point geometry:', invalidCities.map(c => c.name));
+    }
+
     const citiesGeoJSON = {
       type: 'FeatureCollection',
-      features: cities
-        .filter(city => city.geom && city.geom.type === 'Point')
-        .map(city => ({
-          type: 'Feature',
-          properties: {
-            id: city.id,
-            name: city.name,
-            image_url: city.image_url || '',
-            lng: city.geom.coordinates[0],
-            lat: city.geom.coordinates[1]
-          },
-          geometry: city.geom
-        }))
+      features: validCities.map(city => ({
+        type: 'Feature',
+        properties: {
+          id: city.id,
+          name: city.name,
+          image_url: city.image_url || '',
+          lng: city.geom.coordinates[0],
+          lat: city.geom.coordinates[1]
+        },
+        geometry: city.geom
+      }))
     };
 
-    // Add source with clustering enabled - show individual markers sooner
-    if (!mapInstance.getSource('cities')) {
+    console.log('[MARKERS] GeoJSON features count:', citiesGeoJSON.features.length);
+
+    // Add source with clustering enabled
+    const existingSource = mapInstance.getSource('cities') as maplibregl.GeoJSONSource;
+    if (existingSource) {
+      // Update existing source data
+      console.log('[MARKERS] Updating existing source with new data');
+      existingSource.setData(citiesGeoJSON as any);
+    } else {
+      // Create new source
+      console.log('[MARKERS] Creating new source');
       mapInstance.addSource('cities', {
         type: 'geojson',
         data: citiesGeoJSON as any,
         cluster: true,
-        clusterMaxZoom: 8, // Show individual markers at zoom 8+
-        clusterRadius: 40 // Tighter grouping for cleaner look
+        clusterMaxZoom: 14,
+        clusterRadius: 50
       });
     }
 
-    // Add cluster outer ring layer (ice white blue - lighter ring)
+    // Add cluster outer ring layer (ice white blue - lighter ring) - VISUAL ONLY, not clickable
     if (!mapInstance.getLayer('clusters-outer')) {
       mapInstance.addLayer({
         id: 'clusters-outer',
         type: 'circle',
         source: 'cities',
         filter: ['has', 'point_count'],
-        minzoom: 5,
-        maxzoom: 9,
+        minzoom: 3,
+        maxzoom: 15,
         paint: {
           'circle-color': [
             'step',
@@ -187,53 +233,70 @@ export default function FloridaMap() {
             'interpolate',
             ['exponential', 1.2],
             ['zoom'],
-            5, ['step', ['get', 'point_count'], 18, 5, 24, 10, 30, 20, 38],  // Outer ring at zoom 5 (slightly larger)
-            7, ['step', ['get', 'point_count'], 19, 5, 26, 10, 33, 20, 42],  // Outer ring at zoom 7
-            9, ['step', ['get', 'point_count'], 24, 5, 32, 10, 40, 20, 50]   // Outer ring at zoom 9
+            5, ['step', ['get', 'point_count'], 18, 5, 24, 10, 30, 20, 38],
+            7, ['step', ['get', 'point_count'], 19, 5, 26, 10, 33, 20, 42],
+            9, ['step', ['get', 'point_count'], 24, 5, 32, 10, 40, 20, 50],
+            12, ['step', ['get', 'point_count'], 28, 5, 36, 10, 44, 20, 54]
           ],
-          'circle-opacity': 0.6,
+          'circle-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            10, 0.6,
+            13, 0.3,
+            14, 0
+          ],
           'circle-stroke-width': 0,
           'circle-blur': 0.15
         }
       });
     }
 
-    // Add cluster inner circle layer (blue munsell - main circle)
+    // Add cluster inner circle layer (blue munsell - main circle) - PRIMARY CLICKABLE LAYER
     if (!mapInstance.getLayer('clusters-inner')) {
       mapInstance.addLayer({
         id: 'clusters-inner',
         type: 'circle',
         source: 'cities',
         filter: ['has', 'point_count'],
-        minzoom: 5,
-        maxzoom: 9,
+        minzoom: 3,
+        maxzoom: 15,
         paint: {
-          'circle-color': '#0085C9', // Consistent Blue Munsell for all clusters
+          'circle-color': '#0085C9',
           'circle-radius': [
             'interpolate',
             ['exponential', 1.2],
             ['zoom'],
-            5, ['step', ['get', 'point_count'], 12, 5, 17, 10, 21, 20, 26],  // Inner circle at zoom 5 (slightly larger)
-            7, ['step', ['get', 'point_count'], 13, 5, 18, 10, 23, 20, 28],  // Inner circle at zoom 7
-            9, ['step', ['get', 'point_count'], 16, 5, 22, 10, 28, 20, 34]   // Inner circle at zoom 9
+            5, ['step', ['get', 'point_count'], 12, 5, 17, 10, 21, 20, 26],
+            7, ['step', ['get', 'point_count'], 13, 5, 18, 10, 23, 20, 28],
+            9, ['step', ['get', 'point_count'], 16, 5, 22, 10, 28, 20, 34],
+            12, ['step', ['get', 'point_count'], 18, 5, 24, 10, 30, 20, 38]
           ],
-          'circle-opacity': 1,
+          'circle-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            10, 1,    // Fully visible
+            13, 0.7,  // Start fading
+            14, 0     // Fade out before breaking
+          ],
           'circle-stroke-width': 2.5,
           'circle-stroke-color': '#ffffff',
-          'circle-stroke-opacity': 0.9
+          'circle-stroke-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            10, 0.9,
+            13, 0.6,
+            14, 0
+          ]
         }
       });
     }
 
-    // Add cluster count labels
+    // Add cluster count labels - VISUAL ONLY, not clickable
     if (!mapInstance.getLayer('cluster-count')) {
       mapInstance.addLayer({
         id: 'cluster-count',
         type: 'symbol',
         source: 'cities',
         filter: ['has', 'point_count'],
-        minzoom: 5,
-        maxzoom: 9,
+        minzoom: 3,
+        maxzoom: 15,
         layout: {
           'text-field': ['get', 'point_count_abbreviated'],
           'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
@@ -249,29 +312,47 @@ export default function FloridaMap() {
         },
         paint: {
           'text-color': '#ffffff',
-          'text-opacity': 1,
-          'text-halo-color': 'rgba(0, 133, 201, 0.5)', // Blue munsell halo for cohesion
+          'text-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            10, 1,
+            13, 0.7,
+            14, 0
+          ],
+          'text-halo-color': 'rgba(0, 133, 201, 0.5)',
           'text-halo-width': 2,
           'text-halo-blur': 0.5
         }
       });
     }
 
-    // Add individual unclustered points - show at zoom 8+ (when clusters disappear)
+    // Add individual unclustered points - show when not clustered
     if (!mapInstance.getLayer('unclustered-point')) {
       mapInstance.addLayer({
         id: 'unclustered-point',
         type: 'circle',
         source: 'cities',
         filter: ['!', ['has', 'point_count']],
-        minzoom: 8, // Show individual markers at zoom 8+ (right when clusters disappear)
+        minzoom: 3,
         paint: {
           'circle-color': '#ffffff',
-          'circle-radius': 7,
+          'circle-radius': [
+            'interpolate', ['linear'], ['zoom'],
+            6, 5,   // Smaller at low zoom
+            10, 7,  // Normal size
+            14, 9   // Slightly larger at high zoom
+          ],
           'circle-stroke-width': 2.5,
           'circle-stroke-color': 'rgba(0,0,0,0.4)',
-          'circle-opacity': 1,
-          'circle-stroke-opacity': 1
+          'circle-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            6, 0,    // Fade in starts
+            7, 1     // Fully visible
+          ],
+          'circle-stroke-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            6, 0,
+            7, 1
+          ]
         }
       });
     }
@@ -283,14 +364,19 @@ export default function FloridaMap() {
         type: 'symbol',
         source: 'cities',
         filter: ['!', ['has', 'point_count']],
-        minzoom: 8, // Show labels at same zoom as markers
+        minzoom: 6, // Match unclustered-point visibility
         layout: {
           'text-field': ['get', 'name'],
           'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
-          'text-size': 14, // Slightly reduced
-          'text-offset': [0, -1.0],  // Moved slightly down
-          'text-anchor': 'bottom',    // Anchor at bottom
-          'text-allow-overlap': true, // Allow overlap so labels always show
+          'text-size': [
+            'interpolate', ['linear'], ['zoom'],
+            6, 11,
+            8, 13,
+            10, 14
+          ],
+          'text-offset': [0, -1.0],
+          'text-anchor': 'bottom',
+          'text-allow-overlap': true,
           'text-ignore-placement': false
         },
         paint: {
@@ -298,157 +384,64 @@ export default function FloridaMap() {
           'text-halo-color': 'rgba(0, 0, 0, 0.9)',
           'text-halo-width': 2,
           'text-halo-blur': 0.8,
-          'text-opacity': 1
+          'text-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            6, 0,
+            7, 1
+          ]
         }
       });
     }
 
-    // Click handler for clusters - zoom to expansion level
-    const clusterClickHandler = (e: maplibregl.MapMouseEvent) => {
-      // Prevent rapid clicks during animation
-      if (isAnimating.current) {
-        console.log('[CLUSTER] Animation in progress, ignoring click');
-        return;
-      }
+    // Click handler for clusters - expands cluster to next zoom level
+    const clusterClickHandler = async (e: maplibregl.MapMouseEvent) => {
+      e.preventDefault();
+      e.originalEvent.stopPropagation();
 
-      console.log('[CLUSTER] Click detected');
+      if (isAnimating.current) return;
 
       const features = mapInstance.queryRenderedFeatures(e.point, {
-        layers: ['clusters-outer', 'clusters-inner']
+        layers: ['clusters-inner']
       });
 
-      if (!features.length) {
-        console.log('[CLUSTER] No cluster found');
-        return;
-      }
+      if (!features.length) return;
 
       const feature = features[0];
-      if (!feature.geometry || feature.geometry.type !== 'Point') {
-        console.log('[CLUSTER] Invalid geometry');
-        return;
-      }
+      if (!feature.geometry || feature.geometry.type !== 'Point') return;
 
       const clusterId = feature.properties?.cluster_id;
       const coordinates = (feature.geometry as any).coordinates as [number, number];
 
-      const pointCount = feature.properties?.point_count || 0;
+      if (clusterId === undefined || clusterId === null) return;
 
-      console.log('[CLUSTER] Cluster ID:', clusterId, 'Coordinates:', coordinates, 'Point count:', pointCount);
+      const source = mapInstance.getSource('cities') as maplibregl.GeoJSONSource;
+      if (!source || typeof source.getClusterExpansionZoom !== 'function') return;
 
-      // Find which region this cluster is in and auto-select it
-      const clusterRegion = regions.find(region => {
-        if (!region.geom) return false;
+      try {
+        const zoom = await source.getClusterExpansionZoom(clusterId);
+        if (zoom === undefined || zoom === null) return;
 
-        // Check if cluster coordinates are within region bounds
-        const point = {
-          type: 'Point' as const,
-          coordinates: coordinates
-        };
+        const mapRef = map.current;
+        if (!mapRef) return;
 
-        // Simple point-in-polygon check using bounds
-        if (region.geom.type === 'Polygon') {
-          const coords = region.geom.coordinates[0];
-          let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
-          coords.forEach((coord: number[]) => {
-            minLng = Math.min(minLng, coord[0]);
-            maxLng = Math.max(maxLng, coord[0]);
-            minLat = Math.min(minLat, coord[1]);
-            maxLat = Math.max(maxLat, coord[1]);
-          });
-          return coordinates[0] >= minLng && coordinates[0] <= maxLng &&
-                 coordinates[1] >= minLat && coordinates[1] <= maxLat;
-        } else if (region.geom.type === 'MultiPolygon') {
-          return region.geom.coordinates.some((polygon: number[][][]) => {
-            const coords = polygon[0];
-            let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
-            coords.forEach((coord: number[]) => {
-              minLng = Math.min(minLng, coord[0]);
-              maxLng = Math.max(maxLng, coord[0]);
-              minLat = Math.min(minLat, coord[1]);
-              maxLat = Math.max(maxLat, coord[1]);
-            });
-            return coordinates[0] >= minLng && coordinates[0] <= maxLng &&
-                   coordinates[1] >= minLat && coordinates[1] <= maxLat;
-          });
-        }
-        return false;
-      });
+        // Disable pitch updates during animation (prevents interference)
+        (mapRef as any)._allowPitchUpdate = false;
+        isAnimating.current = true;
 
-      if (clusterRegion && clusterRegion.id !== selectedRegion?.id) {
-        console.log('[CLUSTER] Auto-selecting region:', clusterRegion.name);
-        selectRegion(clusterRegion);
-      }
+        mapRef.easeTo({
+          center: coordinates,
+          zoom: zoom,
+          duration: 300,
+          easing: (t: number) => 1 - Math.pow(1 - t, 3) // Ease-out cubic
+        });
 
-      // Get the GeoJSON source that has clustering enabled
-      const source = mapInstance.getSource('cities');
-
-      if (!source) {
-        console.error('[CLUSTER] Cities source not found');
-        return;
-      }
-
-      console.log('[CLUSTER] workerOptions:', (source as any).workerOptions);
-      console.log('[CLUSTER] Cluster settings:', (source as any).workerOptions?.cluster,
-                  'clusterMaxZoom:', (source as any).workerOptions?.clusterMaxZoom);
-
-      // Since the callback never fires, let's compute it ourselves based on cluster settings
-      // Get cluster configuration from source options
-      const clusterMaxZoom = (source as any).workerOptions?.clusterMaxZoom || 8;
-      const currentZoom = mapInstance.getZoom();
-
-      console.log('[CLUSTER] Current zoom:', currentZoom, 'clusterMaxZoom:', clusterMaxZoom);
-
-      // Calculate target zoom based on cluster behavior:
-      // - If we're below clusterMaxZoom, zoom to clusterMaxZoom (where clusters break into points)
-      // - If we're near clusterMaxZoom, zoom a bit past it to ensure expansion
-      // - For progressive breakdown, zoom incrementally
-      let targetZoom: number;
-
-      if (currentZoom < clusterMaxZoom - 2) {
-        // Far from max zoom - zoom closer but not all the way (progressive)
-        targetZoom = currentZoom + 2;
-      } else if (currentZoom < clusterMaxZoom) {
-        // Near max zoom - zoom to just past clusterMaxZoom to break cluster
-        targetZoom = clusterMaxZoom + 0.5;
-      } else {
-        // Already past clusterMaxZoom - zoom in more to spread out points
-        targetZoom = currentZoom + 1.5;
-      }
-
-      // Ensure we don't exceed map's max zoom
-      targetZoom = Math.min(targetZoom, 13);
-
-      console.log('[CLUSTER] Target zoom:', targetZoom, 'for cluster with', pointCount, 'points');
-
-      // Set animation flag
-      isAnimating.current = true;
-
-      // Disable pitch updates during cluster animation
-      (mapInstance as any)._allowPitchUpdate = false;
-
-      console.log('[CLUSTER] Animating to target zoom level');
-
-      // Zoom to the target level - this will cause the cluster to break down progressively
-      mapInstance.easeTo({
-        center: coordinates,
-        zoom: targetZoom,
-        duration: 1200
-      });
-
-      // Re-enable pitch updates and reset animation flag after animation completes
-      setTimeout(() => {
-        if (mapInstance && (mapInstance as any)._allowPitchUpdate !== undefined) {
-          (mapInstance as any)._allowPitchUpdate = true;
-
-          // Update pitch to match final zoom level
-          const finalZoom = mapInstance.getZoom();
-          const finalPitch = finalZoom > 11 ? Math.min(45, (finalZoom - 11) * 15) : 0;
-          mapInstance.setPitch(finalPitch);
-
+        setTimeout(() => {
           isAnimating.current = false;
-          console.log('[CLUSTER] Expansion animation complete, final zoom:', finalZoom);
-        }
-      }, 1300);
+          (mapRef as any)._allowPitchUpdate = true;
+        }, 350);
+      } catch (err) {
+        console.error('[CLUSTER] Expansion error:', err);
+      }
     };
 
     // Click handler for individual points - modern sequence: zoom → highlight → popup
@@ -570,7 +563,8 @@ export default function FloridaMap() {
     };
 
     // Add event listeners
-    mapInstance.on('click', 'clusters-outer', clusterClickHandler);
+    // ONLY attach click handler to clusters-inner (the primary cluster layer)
+    // clusters-outer is visual only, not clickable
     mapInstance.on('click', 'clusters-inner', clusterClickHandler);
     mapInstance.on('click', 'unclustered-point', pointClickHandler);
 
@@ -600,7 +594,6 @@ export default function FloridaMap() {
 
     return () => {
       // Remove event listeners
-      mapInstance.off('click', 'clusters-outer', clusterClickHandler);
       mapInstance.off('click', 'clusters-inner', clusterClickHandler);
       mapInstance.off('click', 'unclustered-point', pointClickHandler);
       mapInstance.off('mouseenter', 'unclustered-point', pointMouseEnter);
@@ -619,10 +612,13 @@ export default function FloridaMap() {
       if (mapInstance.getLayer('hover-glow')) mapInstance.removeLayer('hover-glow');
       if (mapInstance.getLayer('highlight-marker')) mapInstance.removeLayer('highlight-marker');
 
-      // Remove source
+      // Remove source - ONLY on unmount, not on re-renders
       if (mapInstance.getSource('cities')) mapInstance.removeSource('cities');
     };
-  }, [cities, mapLoaded, map, regions, selectRegion, selectedRegion]);
+    // IMPORTANT: Only depend on cities and mapLoaded - NOT selectedRegion
+    // Changing selectedRegion should NOT destroy/recreate the source
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cities, mapLoaded, map]);
 
   // Update marker/cluster opacity when region selection changes
   useEffect(() => {
@@ -1021,7 +1017,7 @@ export default function FloridaMap() {
                 {/* Image */}
                 <div className="popup-image relative h-32 overflow-hidden">
                   <Image
-                    src={popupCity.image_url || "https://images.unsplash.com/photo-1505881502353-a1986add3762?w=800&auto=format&fit=crop"}
+                    src={popupCity.image_url || getCityFallbackImage(popupCity.name)}
                     alt={popupCity.name}
                     fill
                     className="object-cover"
@@ -1114,11 +1110,25 @@ export default function FloridaMap() {
             <div className="bg-gradient-to-br from-slate-900/98 to-slate-800/98 backdrop-blur-2xl rounded-xl md:rounded-2xl border border-cyan-400/20 shadow-2xl shadow-cyan-500/10 overflow-hidden">
               {/* Header */}
               <div className="px-3 py-2 md:px-4 md:py-3 border-b border-white/10 bg-gradient-to-r from-cyan-500/10 to-blue-500/10">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center justify-between gap-3">
                   <div>
                     <h3 className="text-xs md:text-sm font-semibold text-white tracking-wide">Your Preferences</h3>
                     <p className="text-[9px] md:text-[10px] text-cyan-400/80">{preferredCities.length}/2 cities selected</p>
                   </div>
+                  <button
+                    onClick={() => {
+                      // Close any open popup before showing form
+                      setPopupCityId(null);
+                      if (popupMarkerElement) {
+                        popupMarkerElement.remove();
+                        setPopupMarkerElement(null);
+                      }
+                      setShowContactForm(true);
+                    }}
+                    className="px-3 py-1.5 md:px-4 md:py-2 bg-primary text-primary-foreground text-xs md:text-sm font-medium rounded-lg shadow-md hover:bg-primary/90 transition-all"
+                  >
+                    Continue
+                  </button>
                 </div>
               </div>
 
@@ -1137,7 +1147,7 @@ export default function FloridaMap() {
                       {/* City Image */}
                       <div className="relative h-16 md:h-28 overflow-hidden">
                         <Image
-                          src={city.image_url || "https://images.unsplash.com/photo-1505881502353-a1986add3762?w=800&auto=format&fit=crop"}
+                          src={city.image_url || getCityFallbackImage(city.name)}
                           alt={city.name}
                           fill
                           className="object-cover"
@@ -1219,6 +1229,125 @@ export default function FloridaMap() {
 
         {/* Subtle Vignette Effect - Focus Attention */}
         <div className="absolute inset-0 pointer-events-none z-[1] bg-gradient-radial from-transparent via-transparent to-slate-900/20" />
+
+        {/* Contact Form Modal */}
+        {showContactForm && (
+          <div className="fixed inset-0 z-[2000] flex items-center justify-center p-3 md:p-4">
+            {/* Backdrop */}
+            <div
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={() => setShowContactForm(false)}
+            />
+
+            {/* Modal */}
+            <div className="relative w-full max-w-sm md:max-w-lg bg-gradient-to-br from-slate-900 to-slate-800 rounded-xl md:rounded-2xl border border-white/10 shadow-2xl shadow-black/50 overflow-hidden">
+              {/* Close Button */}
+              <button
+                onClick={() => setShowContactForm(false)}
+                className="absolute top-3 right-3 md:top-4 md:right-4 w-7 h-7 md:w-8 md:h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors z-10"
+              >
+                <X className="w-3.5 h-3.5 md:w-4 md:h-4 text-white" />
+              </button>
+
+              {/* Header */}
+              <div className="px-4 pt-4 pb-3 md:px-6 md:pt-6 md:pb-4">
+                <h2 className="text-base md:text-xl font-semibold text-white mb-0.5">Get Started</h2>
+                <p className="text-xs md:text-sm text-white/60">Enter your details and we'll be in touch shortly.</p>
+              </div>
+
+              {/* Selected Cities Preview */}
+              <div className="px-4 pb-3 md:px-6 md:pb-4">
+                <p className="text-[10px] md:text-xs text-cyan-400 font-medium uppercase tracking-wider mb-2">Your Selected Cities</p>
+                <div className="flex gap-2 md:gap-3">
+                  {preferredCities.map((city) => (
+                    <div key={city.id} className="flex-1 relative rounded-lg md:rounded-xl overflow-hidden h-16 md:h-24">
+                      <Image
+                        src={city.image_url || getCityFallbackImage(city.name)}
+                        alt={city.name}
+                        fill
+                        className="object-cover"
+                        unoptimized
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                      <div className="absolute bottom-1.5 left-2 right-2 md:bottom-2 md:left-3 md:right-3">
+                        <p className="text-white font-semibold text-xs md:text-sm">{city.name}</p>
+                        <p className="text-cyan-400/80 text-[10px] md:text-xs">Florida</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div className="h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+
+              {/* Form */}
+              <div className="px-4 py-3 md:px-6 md:py-5">
+                <div className="space-y-3 md:space-y-4">
+                  {/* Name Row */}
+                  <div className="grid grid-cols-2 gap-2 md:gap-3">
+                    <div>
+                      <label className="block text-[10px] md:text-xs text-white/50 mb-1 md:mb-1.5 font-medium">First Name</label>
+                      <input
+                        type="text"
+                        value={contactForm.firstName}
+                        onChange={(e) => setContactForm(prev => ({ ...prev, firstName: e.target.value }))}
+                        placeholder="John"
+                        className="w-full px-3 py-2 md:px-4 md:py-2.5 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/25 transition-all text-xs md:text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] md:text-xs text-white/50 mb-1 md:mb-1.5 font-medium">Last Name</label>
+                      <input
+                        type="text"
+                        value={contactForm.lastName}
+                        onChange={(e) => setContactForm(prev => ({ ...prev, lastName: e.target.value }))}
+                        placeholder="Doe"
+                        className="w-full px-3 py-2 md:px-4 md:py-2.5 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/25 transition-all text-xs md:text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Email */}
+                  <div>
+                    <label className="block text-[10px] md:text-xs text-white/50 mb-1 md:mb-1.5 font-medium">Email Address</label>
+                    <input
+                      type="email"
+                      value={contactForm.email}
+                      onChange={(e) => setContactForm(prev => ({ ...prev, email: e.target.value }))}
+                      placeholder="john@example.com"
+                      className="w-full px-3 py-2 md:px-4 md:py-2.5 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/25 transition-all text-xs md:text-sm"
+                    />
+                  </div>
+
+                  {/* Phone */}
+                  <div>
+                    <label className="block text-[10px] md:text-xs text-white/50 mb-1 md:mb-1.5 font-medium">Phone Number</label>
+                    <input
+                      type="tel"
+                      value={contactForm.phone}
+                      onChange={(e) => setContactForm(prev => ({ ...prev, phone: e.target.value }))}
+                      placeholder="+1 (555) 000-0000"
+                      className="w-full px-3 py-2 md:px-4 md:py-2.5 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/25 transition-all text-xs md:text-sm"
+                    />
+                  </div>
+                </div>
+
+                {/* Submit Button */}
+                <button
+                  onClick={() => {
+                    console.log('Form submitted:', { ...contactForm, cities: preferredCities.map(c => c.name) });
+                    // TODO: Add API endpoint
+                    setShowContactForm(false);
+                  }}
+                  className="w-full mt-4 md:mt-5 py-2.5 md:py-3 bg-primary text-primary-foreground font-medium rounded-lg shadow-md hover:bg-primary/90 transition-all text-sm md:text-base"
+                >
+                  Submit Request
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Loading overlay */}
         <div
