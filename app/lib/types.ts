@@ -93,6 +93,8 @@ export interface Region {
   name: string;
   slug: string;
   geom: any;
+  label_lng: number | null;
+  label_lat: number | null;
   created_at: string;
   updated_at: string;
 }

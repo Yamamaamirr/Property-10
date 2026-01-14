@@ -7,7 +7,7 @@ import type { Region, GeoJSONData, GeoJSONFeature } from '../types';
 export async function fetchRegions(): Promise<Region[]> {
   const { data, error } = await supabase
     .from('regions')
-    .select('id, name, slug, created_at, updated_at, geom')
+    .select('id, name, slug, created_at, updated_at, geom, label_lng, label_lat')
     .order('name');
 
   if (error) {
@@ -71,9 +71,57 @@ export function normalizeGeometry(geometry: any): any {
 }
 
 /**
- * Converts GeoJSON to database format and saves regions
+ * Calculates the visual center of a polygon using bounding box center
  */
-export async function saveRegionsFromGeoJSON(geojson: GeoJSONData): Promise<number> {
+export function getPolygonCenter(coords: number[][]): [number, number] {
+  let minLng = Infinity, maxLng = -Infinity;
+  let minLat = Infinity, maxLat = -Infinity;
+
+  coords.forEach(coord => {
+    if (coord[0] < minLng) minLng = coord[0];
+    if (coord[0] > maxLng) maxLng = coord[0];
+    if (coord[1] < minLat) minLat = coord[1];
+    if (coord[1] > maxLat) maxLat = coord[1];
+  });
+
+  return [(minLng + maxLng) / 2, (minLat + maxLat) / 2];
+}
+
+/**
+ * Calculates default label position for any geometry type
+ */
+export function calculateDefaultLabelPosition(geometry: any): [number, number] {
+  if (geometry.type === 'Polygon') {
+    return getPolygonCenter(geometry.coordinates[0]);
+  } else if (geometry.type === 'MultiPolygon') {
+    // For MultiPolygon, use the largest polygon's center
+    const polygons = geometry.coordinates;
+    let largestPoly = polygons[0][0];
+    let largestArea = largestPoly.length;
+
+    polygons.forEach((poly: number[][][]) => {
+      if (poly[0].length > largestArea) {
+        largestArea = poly[0].length;
+        largestPoly = poly[0];
+      }
+    });
+
+    return getPolygonCenter(largestPoly);
+  }
+
+  // Fallback: return [0, 0] if geometry type is unknown
+  return [0, 0];
+}
+
+/**
+ * Converts GeoJSON to database format and saves regions
+ * @param geojson - The GeoJSON data to save
+ * @param customLabelPositions - Optional map of region names to [lng, lat] label positions
+ */
+export async function saveRegionsFromGeoJSON(
+  geojson: GeoJSONData,
+  customLabelPositions?: Map<string, [number, number]>
+): Promise<number> {
   const features: GeoJSONFeature[] =
     geojson.type === 'FeatureCollection'
       ? geojson.features
@@ -91,13 +139,25 @@ export async function saveRegionsFromGeoJSON(geojson: GeoJSONData): Promise<numb
       const normalizedGeometry = normalizeGeometry(feature.geometry);
       const geojsonString = JSON.stringify(normalizedGeometry);
 
+      // Use custom label position if provided, otherwise calculate default
+      let labelLng: number, labelLat: number;
+      if (customLabelPositions && customLabelPositions.has(name)) {
+        [labelLng, labelLat] = customLabelPositions.get(name)!;
+        console.log(`📤 Using custom label position for "${name}": [${labelLng}, ${labelLat}]`);
+      } else {
+        [labelLng, labelLat] = calculateDefaultLabelPosition(feature.geometry);
+        console.log(`📤 Using calculated label position for "${name}": [${labelLng}, ${labelLat}]`);
+      }
+
       console.log(`📤 Attempting to insert region: "${name}" with geometry type: ${feature.geometry.type} (normalized to ${normalizedGeometry.type})`);
 
       // Use PostGIS ST_GeomFromGeoJSON to properly insert the geometry
       const { data, error } = await supabase.rpc('insert_region_with_geojson', {
         p_name: name,
         p_slug: slug,
-        p_geojson: geojsonString
+        p_geojson: geojsonString,
+        p_label_lng: labelLng,
+        p_label_lat: labelLat
       });
 
       if (error) {
@@ -161,14 +221,33 @@ export async function saveRegionsFromGeoJSON(geojson: GeoJSONData): Promise<numb
 }
 
 /**
- * Updates a region's name and slug
+ * Updates a region's name and slug, and optionally label coordinates
  */
-export async function updateRegion(id: string, name: string): Promise<void> {
+export async function updateRegion(
+  id: string,
+  name: string,
+  labelLng?: number | null,
+  labelLat?: number | null
+): Promise<void> {
   const slug = createSlug(name);
+
+  const updateData: any = {
+    name,
+    slug,
+    updated_at: new Date().toISOString()
+  };
+
+  // Include label coordinates if provided
+  if (labelLng !== undefined) {
+    updateData.label_lng = labelLng;
+  }
+  if (labelLat !== undefined) {
+    updateData.label_lat = labelLat;
+  }
 
   const { error } = await supabase
     .from('regions')
-    .update({ name, slug, updated_at: new Date().toISOString() })
+    .update(updateData)
     .eq('id', id);
 
   if (error) {
@@ -177,6 +256,29 @@ export async function updateRegion(id: string, name: string): Promise<void> {
       throw new Error('A region with this name already exists.');
     }
     throw new Error('Unable to update the region. Please try again.');
+  }
+}
+
+/**
+ * Updates only the label position for a region
+ */
+export async function updateRegionLabel(
+  id: string,
+  labelLng: number,
+  labelLat: number
+): Promise<void> {
+  const { error } = await supabase
+    .from('regions')
+    .update({
+      label_lng: labelLng,
+      label_lat: labelLat,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error updating region label:', error);
+    throw new Error('Unable to update the region label. Please try again.');
   }
 }
 

@@ -14,6 +14,7 @@ import {
   saveRegionsFromGeoJSON,
   deleteRegion,
   updateRegion,
+  calculateDefaultLabelPosition,
 } from "@/app/lib/api/regions";
 import RegionsMap from "@/app/components/admin/RegionsMap";
 import { toast } from "sonner";
@@ -91,6 +92,7 @@ export default function RegionsPage() {
   const [editableRegions, setEditableRegions] = useState<EditableRegion[]>([]);
   const [pendingGeojson, setPendingGeojson] = useState<GeoJSONData | null>(null);
   const [mapInitialized, setMapInitialized] = useState(false);
+  const [labelPositions, setLabelPositions] = useState<Map<string, [number, number]>>(new Map());
 
   // Delete confirmation
   const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; id: string; name: string }>({
@@ -107,6 +109,7 @@ export default function RegionsPage() {
   const [editName, setEditName] = useState("");
   const [editSlug, setEditSlug] = useState("");
   const [updating, setUpdating] = useState(false);
+  const [editLabelPosition, setEditLabelPosition] = useState<[number, number] | null>(null);
 
   // Map preview refs
   const previewMapContainer = useRef<HTMLDivElement>(null);
@@ -228,6 +231,114 @@ export default function RegionsPage() {
             "line-color": "#76c8fe",
             "line-width": 2,
           },
+        });
+
+        // Add draggable region labels
+        const labelFeatures = editableRegions.map((region, idx) => {
+          const position = labelPositions.get(region.name) || [0, 0];
+          return {
+            type: "Feature" as const,
+            properties: {
+              name: region.name,
+              index: idx,
+            },
+            geometry: {
+              type: "Point" as const,
+              coordinates: position,
+            },
+          };
+        });
+
+        map.addSource("preview-region-labels", {
+          type: "geojson",
+          data: {
+            type: "FeatureCollection",
+            features: labelFeatures as any,
+          },
+        });
+
+        map.addLayer({
+          id: "preview-region-labels",
+          type: "symbol",
+          source: "preview-region-labels",
+          layout: {
+            "text-field": ["get", "name"],
+            "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+            "text-size": 14,
+            "text-transform": "uppercase",
+          },
+          paint: {
+            "text-color": "#ffffff",
+            "text-halo-color": "rgba(0, 0, 0, 0.8)",
+            "text-halo-width": 2,
+          },
+        });
+
+        // Make labels draggable
+        let draggedFeature: any = null;
+        let allFeatures: any[] = labelFeatures;
+
+        map.on("mouseenter", "preview-region-labels", () => {
+          map.getCanvas().style.cursor = "grab";
+        });
+
+        map.on("mouseleave", "preview-region-labels", () => {
+          if (!draggedFeature) {
+            map.getCanvas().style.cursor = "";
+          }
+        });
+
+        map.on("mousedown", "preview-region-labels", (e) => {
+          if (!e.features || e.features.length === 0) return;
+          e.preventDefault();
+
+          map.getCanvas().style.cursor = "grabbing";
+          draggedFeature = e.features[0];
+          const featureIndex = draggedFeature.properties.index;
+
+          const onMove = (e: maplibregl.MapMouseEvent) => {
+            if (!draggedFeature) return;
+
+            map.getCanvas().style.cursor = "grabbing";
+
+            // Update feature position
+            const coords = [e.lngLat.lng, e.lngLat.lat];
+            const updatedFeature = {
+              ...allFeatures[featureIndex],
+              geometry: {
+                type: "Point" as const,
+                coordinates: coords,
+              },
+            };
+
+            allFeatures[featureIndex] = updatedFeature;
+
+            // Update source data
+            const source = map.getSource("preview-region-labels") as maplibregl.GeoJSONSource;
+            if (source) {
+              source.setData({
+                type: "FeatureCollection",
+                features: allFeatures as any,
+              });
+            }
+
+            // Update state
+            const regionName = draggedFeature.properties.name;
+            setLabelPositions((prev) => {
+              const updated = new Map(prev);
+              updated.set(regionName, coords as [number, number]);
+              return updated;
+            });
+          };
+
+          const onUp = () => {
+            map.getCanvas().style.cursor = "";
+            map.off("mousemove", onMove);
+            draggedFeature = null;
+          };
+
+          map.on("mousemove", onMove);
+          map.once("mouseup", onUp);
         });
 
         // Fit map to bounds of all features
@@ -371,6 +482,114 @@ export default function RegionsPage() {
           },
         });
 
+        // Initialize label position (use stored position or calculate default)
+        const region = editDialog.region!;
+        let labelPos: [number, number];
+
+        if (region.label_lng !== null && region.label_lat !== null) {
+          labelPos = [region.label_lng, region.label_lat];
+        } else {
+          labelPos = calculateDefaultLabelPosition(region.geom);
+        }
+
+        setEditLabelPosition(labelPos);
+
+        // Add draggable region label
+        const labelFeature = {
+          type: "Feature" as const,
+          properties: {
+            name: region.name,
+          },
+          geometry: {
+            type: "Point" as const,
+            coordinates: labelPos,
+          },
+        };
+
+        map.addSource("edit-region-label", {
+          type: "geojson",
+          data: {
+            type: "FeatureCollection",
+            features: [labelFeature] as any,
+          },
+        });
+
+        map.addLayer({
+          id: "edit-region-label",
+          type: "symbol",
+          source: "edit-region-label",
+          layout: {
+            "text-field": ["get", "name"],
+            "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+            "text-size": 14,
+            "text-transform": "uppercase",
+          },
+          paint: {
+            "text-color": "#ffffff",
+            "text-halo-color": "rgba(0, 0, 0, 0.8)",
+            "text-halo-width": 2,
+          },
+        });
+
+        // Make label draggable
+        let draggedLabel = false;
+        let currentFeature = labelFeature;
+
+        map.on("mouseenter", "edit-region-label", () => {
+          map.getCanvas().style.cursor = "grab";
+        });
+
+        map.on("mouseleave", "edit-region-label", () => {
+          if (!draggedLabel) {
+            map.getCanvas().style.cursor = "";
+          }
+        });
+
+        map.on("mousedown", "edit-region-label", (e) => {
+          if (!e.features || e.features.length === 0) return;
+          e.preventDefault();
+
+          map.getCanvas().style.cursor = "grabbing";
+          draggedLabel = true;
+
+          const onMove = (e: maplibregl.MapMouseEvent) => {
+            if (!draggedLabel) return;
+
+            map.getCanvas().style.cursor = "grabbing";
+
+            // Update feature position
+            const coords: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+            currentFeature = {
+              ...currentFeature,
+              geometry: {
+                type: "Point" as const,
+                coordinates: coords,
+              },
+            };
+
+            // Update source data
+            const source = map.getSource("edit-region-label") as maplibregl.GeoJSONSource;
+            if (source) {
+              source.setData({
+                type: "FeatureCollection",
+                features: [currentFeature] as any,
+              });
+            }
+
+            // Update state
+            setEditLabelPosition(coords);
+          };
+
+          const onUp = () => {
+            map.getCanvas().style.cursor = "";
+            map.off("mousemove", onMove);
+            draggedLabel = false;
+          };
+
+          map.on("mousemove", onMove);
+          map.once("mouseup", onUp);
+        });
+
         // Fit map to region bounds
         try {
           const bounds = new maplibregl.LngLatBounds();
@@ -463,9 +682,17 @@ export default function RegionsPage() {
         };
       });
 
+      // Calculate default label positions for all regions
+      const defaultLabelPositions = new Map<string, [number, number]>();
+      editable.forEach(region => {
+        const position = calculateDefaultLabelPosition(region.geometry);
+        defaultLabelPositions.set(region.name, position);
+      });
+
       setSelectedFile(file);
       setEditableRegions(editable);
       setPendingGeojson(geojson);
+      setLabelPositions(defaultLabelPositions);
       setShowPreviewModal(true);
 
     } catch (err) {
@@ -509,7 +736,8 @@ export default function RegionsPage() {
         }
       });
 
-      const count = await saveRegionsFromGeoJSON(pendingGeojson);
+      // Pass custom label positions to save function
+      const count = await saveRegionsFromGeoJSON(pendingGeojson, labelPositions);
 
       if (count === 0) {
         toast.error(
@@ -522,6 +750,7 @@ export default function RegionsPage() {
         setPendingGeojson(null);
         setEditableRegions([]);
         setSelectedFile(null);
+        setLabelPositions(new Map());
 
         // Reload regions data (will show loading spinner on map)
         await loadRegionsData();
@@ -545,6 +774,7 @@ export default function RegionsPage() {
     setPendingGeojson(null);
     setEditableRegions([]);
     setSelectedFile(null);
+    setLabelPositions(new Map());
   }
 
   async function handleDelete(id: string, name: string) {
@@ -582,11 +812,16 @@ export default function RegionsPage() {
     const toastId = toast.loading("Updating region...");
 
     try {
-      await updateRegion(editDialog.region.id, editName.trim());
+      // Pass label position if it was set/changed
+      const labelLng = editLabelPosition ? editLabelPosition[0] : undefined;
+      const labelLat = editLabelPosition ? editLabelPosition[1] : undefined;
+
+      await updateRegion(editDialog.region.id, editName.trim(), labelLng, labelLat);
       toast.success("Region updated successfully!", { id: toastId });
 
       // Close dialog
       setEditDialog({ open: false, region: null });
+      setEditLabelPosition(null);
 
       // Reload regions
       await loadRegionsData();
@@ -605,6 +840,7 @@ export default function RegionsPage() {
     setEditDialog({ open: false, region: null });
     setEditName("");
     setEditSlug("");
+    setEditLabelPosition(null);
   }
 
   return (

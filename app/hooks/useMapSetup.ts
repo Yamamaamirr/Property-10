@@ -31,6 +31,10 @@ interface UseMapSetupReturn {
   regions: Region[];
   cities: City[];
   mapLoaded: boolean;
+  selectedRegion: Region | null;
+  selectRegion: (region: Region) => void;
+  deselectRegion: () => void;
+  autoFocusedRegion: Region | null;
 }
 
 /**
@@ -47,6 +51,8 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
   const [regions, setRegions] = useState<Region[]>([]);
   const [cities, setCities] = useState<City[]>([]);
   const [mapLoaded, setMapLoaded] = useState(false);
+  const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
+  const [autoFocusedRegion, setAutoFocusedRegion] = useState<Region | null>(null);
 
   // Debug logging for loading state changes
   useEffect(() => {
@@ -199,6 +205,7 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                     .filter(region => region.geom)
                     .map(region => ({
                       type: 'Feature' as const,
+                      id: region.id, // IMPORTANT: Add id for feature state to work
                       properties: {
                         id: region.id,
                         name: region.name
@@ -208,7 +215,7 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                 };
 
                 // Add regions fill layer (filled when zoomed out, fades as you zoom in)
-                // Using same colors as admin RegionsMap: #4a9eff fill, #76c8fe border
+                // Will be dynamically updated on hover
                 map.current.addLayer({
                   id: 'regions-fill',
                   type: 'fill',
@@ -222,17 +229,14 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                       'interpolate',
                       ['linear'],
                       ['zoom'],
-                      REGION_CONFIG.MIN_ZOOM_VISIBLE, // At zoom 5
-                      0.3, // visible when zoomed out (same as admin)
-                      REGION_CONFIG.FADE_OUT_START, // At zoom 6.0
-                      0.3, // still visible
-                      REGION_CONFIG.FADE_OUT_END, // At zoom 6.8
-                      0 // completely transparent when zoomed in
+                      REGION_CONFIG.MIN_ZOOM_VISIBLE, 0.25,
+                      REGION_CONFIG.FADE_OUT_START, 0.25,
+                      REGION_CONFIG.FADE_OUT_END, 0
                     ]
                   }
                 });
 
-                // Add regions border layer (lighter, stays subtle when zoomed in)
+                // Add regions border layer
                 map.current.addLayer({
                   id: 'regions-border',
                   type: 'line',
@@ -247,15 +251,374 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                       'interpolate',
                       ['linear'],
                       ['zoom'],
-                      REGION_CONFIG.MIN_ZOOM_VISIBLE, 1,
-                      REGION_CONFIG.FADE_OUT_START, 1,
-                      REGION_CONFIG.FADE_OUT_END, 0.5,
-                      12, 0.3
+                      REGION_CONFIG.MIN_ZOOM_VISIBLE, 0.8,
+                      REGION_CONFIG.FADE_OUT_START, 0.8,
+                      REGION_CONFIG.FADE_OUT_END, 0.4,
+                      12, 0.2
+                    ]
+                  }
+                });
+
+                // Helper function to calculate visual center of polygon (better than simple average)
+                const getPolygonCenter = (coords: number[][]): [number, number] => {
+                  // Use bounding box center for better visual placement
+                  let minLng = Infinity, maxLng = -Infinity;
+                  let minLat = Infinity, maxLat = -Infinity;
+
+                  coords.forEach(coord => {
+                    if (coord[0] < minLng) minLng = coord[0];
+                    if (coord[0] > maxLng) maxLng = coord[0];
+                    if (coord[1] < minLat) minLat = coord[1];
+                    if (coord[1] > maxLat) maxLat = coord[1];
+                  });
+
+                  return [(minLng + maxLng) / 2, (minLat + maxLat) / 2];
+                };
+
+                // Create point features for region labels (one per region)
+                const regionLabelFeatures = regionsData
+                  .filter(region => region.geom)
+                  .map(region => {
+                    let center: [number, number];
+
+                    // Use stored label position if available, otherwise calculate from geometry
+                    if (region.label_lng !== null && region.label_lat !== null) {
+                      center = [region.label_lng, region.label_lat];
+                    } else {
+                      // Calculate default position from geometry
+                      if (region.geom.type === 'Polygon') {
+                        center = getPolygonCenter(region.geom.coordinates[0]);
+                      } else if (region.geom.type === 'MultiPolygon') {
+                        // For MultiPolygon, use the largest polygon's center
+                        const polygons = region.geom.coordinates;
+                        let largestPoly = polygons[0][0];
+                        let largestArea = largestPoly.length;
+
+                        polygons.forEach((poly: number[][][]) => {
+                          if (poly[0].length > largestArea) {
+                            largestArea = poly[0].length;
+                            largestPoly = poly[0];
+                          }
+                        });
+
+                        center = getPolygonCenter(largestPoly);
+                      } else {
+                        return null;
+                      }
+                    }
+
+                    return {
+                      type: 'Feature' as const,
+                      properties: {
+                        name: region.name.toUpperCase() // Uppercase like Airbnb
+                      },
+                      geometry: {
+                        type: 'Point' as const,
+                        coordinates: center
+                      }
+                    };
+                  })
+                  .filter(Boolean);
+
+                const regionLabelsSource = {
+                  type: 'FeatureCollection' as const,
+                  features: regionLabelFeatures
+                };
+
+                // Add region labels - Modern, clean, professional style
+                map.current.addLayer({
+                  id: 'regions-labels',
+                  type: 'symbol',
+                  source: {
+                    type: 'geojson',
+                    data: regionLabelsSource as any
+                  },
+                  layout: {
+                    'text-field': ['get', 'name'],
+                    'text-font': ['Open Sans SemiBold', 'Arial Unicode MS Bold'],
+                    'text-size': [
+                      'interpolate',
+                      ['linear'],
+                      ['zoom'],
+                      5, 10,   // Smaller when zoomed out
+                      7, 12,
+                      9, 12,
+                      11, 11
+                    ],
+                    'text-anchor': 'center',
+                    'text-allow-overlap': false,
+                    'text-letter-spacing': 0.08, // Tighter, modern spacing
+                    'text-transform': 'uppercase'
+                  },
+                  paint: {
+                    'text-color': '#e8e8e8', // Light grey-white for modern look
+                    'text-halo-color': 'rgba(0, 0, 0, 0.75)',
+                    'text-halo-width': 2,
+                    'text-halo-blur': 0.8,
+                    'text-opacity': [
+                      'interpolate',
+                      ['linear'],
+                      ['zoom'],
+                      5, 0.85,    // Clearly visible when zoomed out
+                      7, 1.0,     // Peak visibility
+                      9, 0.8,     // Still visible
+                      11, 0.5,    // Fade out as cities appear
+                      12, 0.2,    // Very subtle
+                      13, 0       // Invisible
                     ]
                   }
                 });
 
                 console.log('[MAP] ✓ Added regions layers from database');
+
+                // Add interactive click functionality for regions (hover effects removed)
+                let currentSelectedRegionId: string | null = null;
+                let pitchResetTimeout: NodeJS.Timeout | null = null;
+
+                // Listen for region deselection event
+                map.current.on('region-deselected' as any, () => {
+                  currentSelectedRegionId = null;
+                  if (pitchResetTimeout) {
+                    clearTimeout(pitchResetTimeout);
+                    pitchResetTimeout = null;
+                  }
+                  console.log('[REGION] Local selected region ID reset');
+                });
+
+                // Click region to zoom into it and enter focus mode
+                map.current.on('click', 'regions-fill', (e) => {
+                  if (!map.current || !e.features || e.features.length === 0) return;
+
+                  // Stop event propagation
+                  e.preventDefault();
+                  (e as any).originalEvent?.stopPropagation();
+
+                  const feature = e.features[0];
+                  const regionId = feature.properties?.id;
+                  const regionName = feature.properties?.name;
+
+                  // If clicking the same region, do nothing
+                  if (currentSelectedRegionId === regionId) return;
+
+                  console.log('[REGION] Clicked region:', regionName);
+
+                  // Find the full region object
+                  const clickedRegion = regionsData.find(r => r.id === regionId);
+                  if (!clickedRegion) return;
+
+                  // Clear any pending pitch reset timeout from previous region
+                  if (pitchResetTimeout) {
+                    clearTimeout(pitchResetTimeout);
+                    pitchResetTimeout = null;
+                  }
+
+                  // Update selected region ID
+                  currentSelectedRegionId = regionId;
+
+                  // Set selected region state
+                  setSelectedRegion(clickedRegion);
+
+                  // Disable pitch updates during region zoom animation
+                  (map.current as any)._allowPitchUpdate = false;
+
+                  console.log('[REGION] Switching to region, fitting bounds...');
+
+                  // Remove fill from all regions (show basemap)
+                  map.current.setPaintProperty('regions-fill', 'fill-opacity', 0);
+
+                  // Selected region gets darker cyan border, others get subtle grey
+                  map.current.setPaintProperty('regions-border', 'line-color', [
+                    'case',
+                    ['==', ['get', 'id'], regionId],
+                    '#3aa7d4', // Darker cyan for selected region
+                    '#6b7280'  // Subtle grey for other regions
+                  ]);
+
+                  map.current.setPaintProperty('regions-border', 'line-width', [
+                    'case',
+                    ['==', ['get', 'id'], regionId],
+                    2, // Moderate border for selected
+                    0.8  // Thin subtle border for others
+                  ]);
+
+                  // Get the bounds from the clicked region's geometry
+                  // Use the region object's geometry (not feature.geometry) for consistent results
+                  const regionGeometry = clickedRegion.geom;
+
+                  if (!regionGeometry) {
+                    console.error('[REGION] No geometry found for region:', regionName);
+                    return;
+                  }
+
+                  console.log('[REGION] Processing geometry type:', regionGeometry.type);
+
+                  const bounds = new maplibregl.LngLatBounds();
+
+                  if (regionGeometry.type === 'Polygon') {
+                    const coords = regionGeometry.coordinates[0];
+                    console.log('[REGION] Polygon coords count:', coords.length);
+                    coords.forEach((coord: any) => {
+                      bounds.extend(coord as [number, number]);
+                    });
+                  } else if (regionGeometry.type === 'MultiPolygon') {
+                    console.log('[REGION] MultiPolygon parts:', regionGeometry.coordinates.length);
+                    regionGeometry.coordinates.forEach((polygon: any) => {
+                      polygon[0].forEach((coord: any) => {
+                        bounds.extend(coord as [number, number]);
+                      });
+                    });
+                  }
+
+                  console.log('[REGION] Bounds calculated:', bounds.toArray());
+
+                  // Fly to the region bounds
+                  map.current.fitBounds(bounds, {
+                    padding: 60,
+                    duration: 1200,
+                    easing: (t) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
+                  });
+
+                  // Re-enable pitch updates after animation
+                  pitchResetTimeout = setTimeout(() => {
+                    if (map.current) {
+                      (map.current as any)._allowPitchUpdate = true;
+                      const finalZoom = map.current.getZoom();
+                      const finalPitch = finalZoom > 11 ? Math.min(45, (finalZoom - 11) * 15) : 0;
+                      map.current.setPitch(finalPitch);
+                      console.log('[REGION] Bounds fit complete, pitch updated');
+                    }
+                  }, 1300);
+                });
+
+                // Auto-detect region when user manually zooms/pans (for intuitive UX)
+                let autoFocusedRegionId: string | null = null;
+                const ZOOM_THRESHOLD = 7.2; // Start auto-detecting at this zoom level
+
+                const updateAutoFocusRegion = () => {
+                  if (!map.current) return;
+
+                  const zoom = map.current.getZoom();
+
+                  // Only auto-focus if zoomed in enough and no region is explicitly selected
+                  if (zoom < ZOOM_THRESHOLD || currentSelectedRegionId) {
+                    // Reset auto-focus if zoomed out or region is selected
+                    if (autoFocusedRegionId && !currentSelectedRegionId) {
+                      autoFocusedRegionId = null;
+                      setAutoFocusedRegion(null);
+                      // Reset to default styles
+                      map.current.setPaintProperty('regions-fill', 'fill-opacity', 0.25);
+                      map.current.setPaintProperty('regions-fill', 'fill-color', '#4a9eff');
+                      map.current.setPaintProperty('regions-border', 'line-color', '#76c8fe');
+                      map.current.setPaintProperty('regions-border', 'line-width', 1);
+                    }
+                    return;
+                  }
+
+                  // Sample multiple points to determine which region is most dominant
+                  const viewportWidth = map.current.getCanvas().width;
+                  const viewportHeight = map.current.getCanvas().height;
+
+                  // Sample points in a grid pattern
+                  const samplePoints = [];
+                  const gridSize = 5; // 5x5 grid = 25 sample points
+
+                  for (let x = 0; x < gridSize; x++) {
+                    for (let y = 0; y < gridSize; y++) {
+                      samplePoints.push({
+                        x: (viewportWidth / (gridSize + 1)) * (x + 1),
+                        y: (viewportHeight / (gridSize + 1)) * (y + 1)
+                      });
+                    }
+                  }
+
+                  // Count which region appears at each sample point
+                  const regionCounts: { [key: string]: { count: number; name: string } } = {};
+
+                  samplePoints.forEach(point => {
+                    const features = map.current!.queryRenderedFeatures([point.x, point.y], {
+                      layers: ['regions-fill']
+                    });
+
+                    if (features && features.length > 0) {
+                      const id = features[0].properties?.id;
+                      const name = features[0].properties?.name;
+                      if (id) {
+                        if (!regionCounts[id]) {
+                          regionCounts[id] = { count: 0, name: name || '' };
+                        }
+                        regionCounts[id].count++;
+                      }
+                    }
+                  });
+
+                  // Find the dominant region
+                  let maxCount = 0;
+                  let dominantRegionId: string | null = null;
+                  let secondMaxCount = 0;
+
+                  Object.entries(regionCounts).forEach(([id, data]) => {
+                    if (data.count > maxCount) {
+                      secondMaxCount = maxCount;
+                      maxCount = data.count;
+                      dominantRegionId = id;
+                    } else if (data.count > secondMaxCount) {
+                      secondMaxCount = data.count;
+                    }
+                  });
+
+                  // Only highlight if:
+                  // 1. A region is found
+                  // 2. It occupies at least 40% of sample points (10 out of 25)
+                  // 3. It's at least 2x more visible than the second region (or second doesn't exist)
+                  const minSamples = Math.floor(samplePoints.length * 0.4);
+                  const isDominant = dominantRegionId &&
+                                     maxCount >= minSamples &&
+                                     (secondMaxCount === 0 || maxCount >= secondMaxCount * 2);
+
+                  if (isDominant && dominantRegionId) {
+                    // Only update if the focused region changed
+                    if (dominantRegionId !== autoFocusedRegionId) {
+                      autoFocusedRegionId = dominantRegionId;
+
+                      console.log('[REGION] Auto-focused region:', regionCounts[dominantRegionId].name,
+                                  `(${maxCount}/${samplePoints.length} samples)`);
+
+                      // Update state with the full region object
+                      const focusedRegion = regionsData.find(r => r.id === dominantRegionId);
+                      setAutoFocusedRegion(focusedRegion || null);
+
+                      // Apply same styling as click selection - no fill, prominent border
+                      map.current.setPaintProperty('regions-fill', 'fill-opacity', 0);
+
+                      map.current.setPaintProperty('regions-border', 'line-color', [
+                        'case',
+                        ['==', ['get', 'id'], autoFocusedRegionId],
+                        '#3aa7d4', // Darker cyan for auto-focused region (same as selected)
+                        '#6b7280'  // Subtle grey for other regions
+                      ]);
+
+                      map.current.setPaintProperty('regions-border', 'line-width', [
+                        'case',
+                        ['==', ['get', 'id'], autoFocusedRegionId],
+                        2, // Moderate border for auto-focused (same as selected)
+                        0.8  // Thin subtle border for others
+                      ]);
+                    }
+                  } else if (autoFocusedRegionId) {
+                    // Not dominant enough - reset
+                    console.log('[REGION] No clearly dominant region');
+                    autoFocusedRegionId = null;
+                    setAutoFocusedRegion(null);
+                    map.current.setPaintProperty('regions-fill', 'fill-opacity', 0.25);
+                    map.current.setPaintProperty('regions-fill', 'fill-color', '#4a9eff');
+                    map.current.setPaintProperty('regions-border', 'line-color', '#76c8fe');
+                    map.current.setPaintProperty('regions-border', 'line-width', 1);
+                  }
+                };
+
+                // Listen to map movement and zoom changes
+                map.current.on('moveend', updateAutoFocusRegion);
+                map.current.on('zoomend', updateAutoFocusRegion);
               }
 
               // Add tilt/pitch logic based on zoom level (same as admin CitiesMap)
@@ -283,8 +646,15 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                 });
               } else {
                 // Desktop: real-time gradual pitch updates during zoom
+                // Store flag on map instance to allow cluster animations to disable this temporarily
+                (map.current as any)._allowPitchUpdate = true;
+
                 map.current.on('zoom', () => {
                   if (!map.current) return;
+
+                  // Skip pitch updates if disabled (during cluster animations)
+                  if (!(map.current as any)._allowPitchUpdate) return;
+
                   const zoom = map.current.getZoom();
                   const targetPitch = zoom > 11 ? Math.min(45, (zoom - 11) * 15) : 0;
                   map.current.setPitch(targetPitch);
@@ -379,5 +749,100 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
     };
   }, [onError]);
 
-  return { mapContainer, map, isLoading, error, regions, cities, mapLoaded };
+  // Function to select a region
+  const selectRegion = useCallback((region: Region) => {
+    if (!map.current || !region) return;
+
+    console.log('[REGION] Programmatically selecting region:', region.name);
+
+    // Set selected region state
+    setSelectedRegion(region);
+
+    // Update region styling to show selection
+    map.current.setPaintProperty('regions-fill', 'fill-opacity', 0);
+    map.current.setPaintProperty('regions-border', 'line-color', [
+      'case',
+      ['==', ['get', 'id'], region.id],
+      '#3aa7d4',
+      '#6b7280'
+    ]);
+    map.current.setPaintProperty('regions-border', 'line-width', [
+      'case',
+      ['==', ['get', 'id'], region.id],
+      2,
+      0.8
+    ]);
+  }, []);
+
+  // Function to deselect region and return to default view
+  const deselectRegion = useCallback(() => {
+    if (!map.current || !selectedRegion) return;
+
+    console.log('[REGION] Deselecting region, returning to default view');
+
+    // Reset selected region state
+    setSelectedRegion(null);
+
+    // Restore all regions to default appearance
+    map.current.setPaintProperty('regions-fill', 'fill-color', '#4a9eff');
+    map.current.setPaintProperty('regions-fill', 'fill-opacity', 0.25);
+    map.current.setPaintProperty('regions-border', 'line-color', '#76c8fe');
+    map.current.setPaintProperty('regions-border', 'line-width', 1);
+
+    // Emit a custom event to reset the local selected region ID
+    map.current.fire('region-deselected' as any);
+
+    // Zoom back to Florida view
+    const isMobile = window.innerWidth < 768;
+    const isTablet = window.innerWidth >= 768 && window.innerWidth < 1024;
+
+    let initialCenter: [number, number];
+    let initialZoom: number;
+
+    if (isMobile) {
+      initialCenter = [-83.5, 27.0]; // Mobile - shifted more right and south for portrait
+      initialZoom = 5.0;
+    } else if (isTablet) {
+      initialCenter = [-82.2, 27.6648]; // Tablet - similar to desktop
+      initialZoom = 5.5;
+    } else {
+      initialCenter = MAP_CONFIG.INITIAL_CENTER as [number, number];
+      initialZoom = MAP_CONFIG.INITIAL_ZOOM;
+    }
+
+    // Disable pitch updates during zoom
+    (map.current as any)._allowPitchUpdate = false;
+
+    map.current.flyTo({
+      center: initialCenter,
+      zoom: initialZoom,
+      duration: 1200,
+      curve: 1.2,
+      easing: (t) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
+    });
+
+    // Re-enable pitch updates after animation
+    setTimeout(() => {
+      if (map.current) {
+        (map.current as any)._allowPitchUpdate = true;
+        const finalZoom = map.current.getZoom();
+        const finalPitch = finalZoom > 11 ? Math.min(45, (finalZoom - 11) * 15) : 0;
+        map.current.setPitch(finalPitch);
+      }
+    }, 1300);
+  }, [selectedRegion]);
+
+  return {
+    mapContainer,
+    map,
+    isLoading,
+    error,
+    regions,
+    cities,
+    mapLoaded,
+    selectedRegion,
+    selectRegion,
+    deselectRegion,
+    autoFocusedRegion
+  };
 }
