@@ -78,12 +78,12 @@ export default function FloridaMap() {
   const [popupCityId, setPopupCityId] = useState<string | null>(null);
   const [popupMarkerElement, setPopupMarkerElement] = useState<HTMLElement | null>(null);
   const popupRef = useRef<HTMLDivElement>(null);
-  const lineRef = useRef<SVGLineElement>(null);
   const popupCityIdRef = useRef<string | null>(null);
   const [expandedCluster, setExpandedCluster] = useState<{ lng: number; lat: number; cities: City[] } | null>(null);
 
   // Preferences state - maximum 2 cities
   const [preferredCities, setPreferredCities] = useState<City[]>([]);
+  const [selectedPreferredCityId, setSelectedPreferredCityId] = useState<string | null>(null);
 
   // Contact form modal state
   const [showContactForm, setShowContactForm] = useState(false);
@@ -126,6 +126,138 @@ export default function FloridaMap() {
   const isCityPreferred = useCallback((cityId: string) => {
     return preferredCities.some(c => c.id === cityId);
   }, [preferredCities]);
+
+  // Handle click on preferred city card - highlight and zoom to it
+  const handlePreferredCityClick = useCallback((city: City) => {
+    if (!map.current) return;
+
+    const mapInstance = map.current;
+
+    // Toggle selection if clicking on already selected city
+    if (selectedPreferredCityId === city.id) {
+      // Deselect
+      setSelectedPreferredCityId(null);
+
+      // Close any open popup
+      setPopupCityId(null);
+      if (popupMarkerElement) {
+        popupMarkerElement.remove();
+        setPopupMarkerElement(null);
+      }
+
+      // Remove highlight marker
+      if (mapInstance.getLayer('highlight-marker')) {
+        mapInstance.setFilter('highlight-marker', ['==', ['get', 'id'], '']);
+      }
+
+      // Restore all labels
+      if (mapInstance.getLayer('unclustered-label')) {
+        mapInstance.setFilter('unclustered-label', ['!', ['has', 'point_count']]);
+      }
+
+      return;
+    }
+
+    // Clean up existing popup if switching to a different city
+    if (popupCityId && popupCityId !== city.id) {
+      setPopupCityId(null);
+      if (popupMarkerElement) {
+        popupMarkerElement.remove();
+        setPopupMarkerElement(null);
+      }
+    }
+
+    // Set as selected (for visual highlight)
+    setSelectedPreferredCityId(city.id);
+
+    // Restore all labels first
+    if (mapInstance.getLayer('unclustered-label')) {
+      mapInstance.setFilter('unclustered-label', ['!', ['has', 'point_count']]);
+    }
+
+    // Highlight the marker on the map IMMEDIATELY
+    if (!mapInstance.getLayer('highlight-marker')) {
+      mapInstance.addLayer({
+        id: 'highlight-marker',
+        type: 'circle',
+        source: 'cities',
+        filter: ['==', ['get', 'id'], city.id],
+        paint: {
+          'circle-color': '#00d4ff',
+          'circle-radius': 12,
+          'circle-opacity': 0.4,
+          'circle-stroke-width': 3,
+          'circle-stroke-color': '#00d4ff',
+          'circle-stroke-opacity': 0.8
+        }
+      });
+    } else {
+      mapInstance.setFilter('highlight-marker', ['==', ['get', 'id'], city.id]);
+    }
+
+    // Hide the label for this city
+    if (mapInstance.getLayer('unclustered-label')) {
+      mapInstance.setFilter('unclustered-label', [
+        '!=', ['get', 'id'], city.id
+      ]);
+    }
+
+    // Animate to the city location first, then show popup
+    if (city.geom && city.geom.type === 'Point') {
+      const coordinates = city.geom.coordinates;
+      const targetZoom = 16; // Zoom level to see the city clearly (increased from 14.5)
+      const targetPitch = Math.min(45, (targetZoom - 11) * 15);
+      const POPUP_TRIGGER_ZOOM = 12; // Show popup when we reach this zoom level (earlier trigger)
+
+      // Disable automatic pitch updates and auto-focus region updates
+      (mapInstance as any)._allowPitchUpdate = false;
+      (mapInstance as any)._allowAutoFocusUpdate = false;
+
+      // Fly to the city with smooth animation
+      mapInstance.flyTo({
+        center: coordinates as [number, number],
+        zoom: targetZoom,
+        pitch: targetPitch,
+        duration: 3000,
+        curve: 1.4,
+        easing: (t) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
+      });
+
+      // Listen for zoom changes during animation
+      const showPopupWhenReady = () => {
+        const currentZoom = mapInstance.getZoom();
+
+        if (currentZoom >= POPUP_TRIGGER_ZOOM && popupCityIdRef.current !== city.id) {
+          // Show popup now that we're close enough
+          setPopupCityId(city.id);
+
+          // Create a temporary marker element for the popup portal
+          const el = document.createElement('div');
+          el.style.cssText = 'position: absolute; pointer-events: none;';
+          mapInstance.getContainer().appendChild(el);
+          setPopupMarkerElement(el);
+
+          // Position the element at the marker location
+          const point = mapInstance.project(coordinates as [number, number]);
+          el.style.left = `${point.x}px`;
+          el.style.top = `${point.y}px`;
+
+          // Remove listener once popup is shown
+          mapInstance.off('zoom', showPopupWhenReady);
+        }
+      };
+
+      mapInstance.on('zoom', showPopupWhenReady);
+
+      // Re-enable pitch updates and auto-focus updates after animation
+      setTimeout(() => {
+        (mapInstance as any)._allowPitchUpdate = true;
+        (mapInstance as any)._allowAutoFocusUpdate = true;
+        // Remove listener in case animation ended before trigger zoom
+        mapInstance.off('zoom', showPopupWhenReady);
+      }, 3000);
+    }
+  }, [map, popupMarkerElement, selectedPreferredCityId, popupCityId]);
 
   // Keep ref in sync with state for use in event handlers
   useEffect(() => {
@@ -220,13 +352,13 @@ export default function FloridaMap() {
           'circle-color': [
             'step',
             ['get', 'point_count'],
-            '#B3D9E8',    // Ice white blue for small clusters (< 5)
+            '#9DD9EC',    // Light maya blue for small clusters (< 5)
             5,
-            '#A8D5E6',    // Slightly deeper ice blue for 5-10
+            '#8DD3EA',    // Slightly deeper for 5-10
             10,
-            '#9DD1E4',    // Medium ice blue for 10-20
+            '#7DCDE8',    // Medium for 10-20
             20,
-            '#8ECDE1'     // Deeper ice blue for 20+ clusters
+            '#76c8fe'     // p10-maya for 20+ clusters
           ],
           'circle-radius': [
             'interpolate',
@@ -244,7 +376,7 @@ export default function FloridaMap() {
             14, 0
           ],
           'circle-stroke-width': 0,
-          'circle-blur': 0.15
+          'circle-blur': 0
         }
       });
     }
@@ -259,7 +391,7 @@ export default function FloridaMap() {
         minzoom: 3,
         maxzoom: 15,
         paint: {
-          'circle-color': '#0085C9',
+          'circle-color': '#00879f', // p10-blue-munsell to match theme
           'circle-radius': [
             'interpolate',
             ['exponential', 1.2],
@@ -276,7 +408,7 @@ export default function FloridaMap() {
             14, 0     // Fade out before breaking
           ],
           'circle-stroke-width': 2.5,
-          'circle-stroke-color': '#ffffff',
+          'circle-stroke-color': '#DEE9F0',
           'circle-stroke-opacity': [
             'interpolate', ['linear'], ['zoom'],
             10, 0.9,
@@ -303,21 +435,21 @@ export default function FloridaMap() {
             'interpolate',
             ['linear'],
             ['zoom'],
-            5, ['step', ['get', 'point_count'], 12, 5, 14, 10, 16, 20, 18],  // Slightly larger at zoom 5
-            7, ['step', ['get', 'point_count'], 14, 5, 16, 10, 18, 20, 20],  // Medium at zoom 7
-            9, ['step', ['get', 'point_count'], 16, 5, 18, 10, 20, 20, 22]   // Larger at zoom 9
+            5, ['step', ['get', 'point_count'], 10, 5, 12, 10, 14, 20, 16],  // Smaller at zoom 5
+            7, ['step', ['get', 'point_count'], 12, 5, 14, 10, 16, 20, 18],  // Smaller at zoom 7
+            9, ['step', ['get', 'point_count'], 14, 5, 16, 10, 18, 20, 20]   // Smaller at zoom 9
           ],
           'text-allow-overlap': true
         },
         paint: {
-          'text-color': '#ffffff',
+          'text-color': '#DEE9F0',
           'text-opacity': [
             'interpolate', ['linear'], ['zoom'],
             10, 1,
             13, 0.7,
             14, 0
           ],
-          'text-halo-color': 'rgba(0, 133, 201, 0.5)',
+          'text-halo-color': 'rgba(0, 135, 159, 0.5)', // p10-blue-munsell with opacity
           'text-halo-width': 2,
           'text-halo-blur': 0.5
         }
@@ -491,42 +623,59 @@ export default function FloridaMap() {
         }
       }
 
-      // Step 2: Show popup immediately
-      setPopupCityId(cityId);
-
-      // Create a temporary marker element for the popup portal
-      const el = document.createElement('div');
-      el.style.cssText = 'position: absolute; pointer-events: none;';
-      mapInstance.getContainer().appendChild(el);
-      setPopupMarkerElement(el);
-
-      // Position the element at the marker location
-      const point = mapInstance.project(coordinates);
-      el.style.left = `${point.x}px`;
-      el.style.top = `${point.y}px`;
-
-      // Step 3: Smooth fly to the city with organic pitch animation
+      // Step 2: Smooth fly to the city with organic pitch animation
       // Calculate target pitch for the zoom level
-      const targetZoom = 14.5; // Zoom in more on marker
+      const targetZoom = 16; // Zoom in more on marker (increased from 14.5)
       const targetPitch = Math.min(45, (targetZoom - 11) * 15);
+      const POPUP_TRIGGER_ZOOM = 12; // Show popup when we reach this zoom level (earlier trigger)
 
-      // Disable automatic pitch updates
+      // Disable automatic pitch updates and auto-focus region updates
       (mapInstance as any)._allowPitchUpdate = false;
+      (mapInstance as any)._allowAutoFocusUpdate = false;
 
       // Fly to with pitch animating during the movement (organic feel)
       mapInstance.flyTo({
         center: coordinates,
         zoom: targetZoom,
         pitch: targetPitch, // Pitch animates WITH the zoom
-        duration: 2200, // Slightly slower
+        duration: 3000, // Slower animation
         curve: 1.4, // Gentler curve
         easing: (t) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t // Ease in-out
       });
 
-      // Re-enable pitch updates after animation
+      // Step 3: Show popup when we reach close enough zoom level
+      const showPopupWhenReady = () => {
+        const currentZoom = mapInstance.getZoom();
+
+        if (currentZoom >= POPUP_TRIGGER_ZOOM && popupCityIdRef.current !== cityId) {
+          // Show popup now that we're close enough
+          setPopupCityId(cityId);
+
+          // Create a temporary marker element for the popup portal
+          const el = document.createElement('div');
+          el.style.cssText = 'position: absolute; pointer-events: none;';
+          mapInstance.getContainer().appendChild(el);
+          setPopupMarkerElement(el);
+
+          // Position the element at the marker location
+          const point = mapInstance.project(coordinates);
+          el.style.left = `${point.x}px`;
+          el.style.top = `${point.y}px`;
+
+          // Remove listener once popup is shown
+          mapInstance.off('zoom', showPopupWhenReady);
+        }
+      };
+
+      mapInstance.on('zoom', showPopupWhenReady);
+
+      // Re-enable pitch updates and auto-focus updates after animation
       setTimeout(() => {
         (mapInstance as any)._allowPitchUpdate = true;
-      }, 2200);
+        (mapInstance as any)._allowAutoFocusUpdate = true;
+        // Remove listener in case animation ended before trigger zoom
+        mapInstance.off('zoom', showPopupWhenReady);
+      }, 3000);
     };
 
     // Hover effects - add visual feedback for points only
@@ -739,51 +888,7 @@ export default function FloridaMap() {
     };
   }, [popupCityId, popupMarkerElement, map, cities]);
 
-  // Update beam line connecting popup to marker
-  useEffect(() => {
-    if (!popupCityId || !map.current || !popupMarkerElement || !lineRef.current || !mapContainer.current) return;
-
-    const mapInstance = map.current;
-    const popupCity = cities.find(c => c.id === popupCityId);
-    if (!popupCity || !popupCity.geom) return;
-
-    const coordinates = popupCity.geom.coordinates;
-
-    const updateBeamLine = () => {
-      requestAnimationFrame(() => {
-        const container = mapContainer.current?.getBoundingClientRect();
-        const popup = popupRef.current?.getBoundingClientRect();
-        const line = lineRef.current;
-
-        if (!container || !popup || !line || !mapInstance) return;
-
-        // Get marker position from map coordinates
-        const markerPoint = mapInstance.project(coordinates);
-        const markerX = markerPoint.x;
-        const markerY = markerPoint.y;
-
-        // Get popup bottom center
-        const popupCenterX = popup.left - container.left + popup.width / 2;
-        const popupBottom = popup.bottom - container.top;
-
-        // Draw dotted line from popup bottom to marker
-        line.setAttribute("x1", popupCenterX.toString());
-        line.setAttribute("y1", popupBottom.toString());
-        line.setAttribute("x2", markerX.toString());
-        line.setAttribute("y2", markerY.toString());
-      });
-    };
-
-    updateBeamLine();
-
-    mapInstance.on('move', updateBeamLine);
-    mapInstance.on('zoom', updateBeamLine);
-
-    return () => {
-      mapInstance.off('move', updateBeamLine);
-      mapInstance.off('zoom', updateBeamLine);
-    };
-  }, [popupCityId, popupMarkerElement, map, cities, mapContainer]);
+  // Line connector removed - popup now has premium arrow indicator
 
   // Auto-close popup when zooming out below threshold
   useEffect(() => {
@@ -796,11 +901,6 @@ export default function FloridaMap() {
       const currentZoom = mapInstance.getZoom();
       if (currentZoom < ZOOM_THRESHOLD) {
         console.log('[POPUP] Auto-closing popup due to zoom out below', ZOOM_THRESHOLD);
-
-        // Clear line ref immediately to prevent flickering
-        if (lineRef.current) {
-          lineRef.current.setAttribute('opacity', '0');
-        }
 
         // Clean up popup
         setPopupCityId(null);
@@ -876,11 +976,17 @@ export default function FloridaMap() {
         @keyframes popupEnter {
           0% {
             opacity: 0;
-            transform: translateX(-50%) translateY(8px) scale(0.96);
+            transform: translateX(-50%) translateY(16px) scale(0.92);
+            filter: blur(4px);
+          }
+          50% {
+            opacity: 0.8;
+            filter: blur(2px);
           }
           100% {
             opacity: 1;
             transform: translateX(-50%) translateY(0) scale(1);
+            filter: blur(0px);
           }
         }
         @keyframes clusterPulse {
@@ -904,7 +1010,7 @@ export default function FloridaMap() {
           }
         }
         .popup-enter {
-          animation: popupEnter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          animation: popupEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
         .back-button-animate {
           animation: slideInFromLeft 0.4s ease-out;
@@ -948,40 +1054,6 @@ export default function FloridaMap() {
           ref={mapContainer}
           className="w-full h-full relative"
         >
-          {/* Shiny ribbon line connecting popup to marker */}
-          {popupCityId && (
-            <svg
-              className="absolute inset-0 pointer-events-none z-[9998]"
-              style={{ width: "100%", height: "100%" }}
-            >
-              <defs>
-                {/* Main gradient - light cyan with shine effect */}
-                <linearGradient id="ribbonGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stopColor="#a8d8ea" stopOpacity="0.1" />
-                  <stop offset="30%" stopColor="#88c8d8" stopOpacity="0.4" />
-                  <stop offset="60%" stopColor="#7ac0d0" stopOpacity="0.5" />
-                  <stop offset="100%" stopColor="#6bb8c8" stopOpacity="0.6" />
-                </linearGradient>
-                {/* Glow filter for shiny effect */}
-                <filter id="ribbonGlow" x="-50%" y="-50%" width="200%" height="200%">
-                  <feGaussianBlur stdDeviation="2" result="glow"/>
-                  <feMerge>
-                    <feMergeNode in="glow"/>
-                    <feMergeNode in="SourceGraphic"/>
-                  </feMerge>
-                </filter>
-              </defs>
-              {/* Outer glow line */}
-              <line
-                ref={lineRef}
-                stroke="url(#ribbonGradient)"
-                strokeWidth="3"
-                strokeLinecap="round"
-                filter="url(#ribbonGlow)"
-                opacity="0.8"
-              />
-            </svg>
-          )}
         </div>
 
         {/* Back Button - appears when region is selected */}
@@ -1010,62 +1082,73 @@ export default function FloridaMap() {
             ref={popupRef}
             className="absolute pointer-events-auto popup-enter city-popup"
             style={{
-              bottom: '55px',
+              bottom: '20px',
               left: '50%',
               transform: 'translateX(-50%)',
               zIndex: 9999,
             }}
           >
             <div className="relative">
-              <div className="bg-gradient-to-br from-slate-900/80 to-slate-800/80 backdrop-blur-xl rounded-xl overflow-hidden shadow-2xl border border-white/10">
+              {/* Premium connector - arrow pointing down */}
+              <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 flex items-center justify-center">
+                <div className="relative flex items-center justify-center">
+                  {/* Outer glow */}
+                  <div className="absolute w-0 h-0 border-l-[11px] border-l-transparent border-r-[11px] border-r-transparent border-t-[13px]" style={{ borderTopColor: 'rgba(222, 233, 240, 0.3)' }} />
+                  {/* Main arrow */}
+                  <div className="relative w-0 h-0 border-l-[10px] border-l-transparent border-r-[10px] border-r-transparent border-t-[12px]" style={{ borderTopColor: '#DEE9F0', filter: 'drop-shadow(0 2px 4px rgba(222, 233, 240, 0.4))' }} />
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-xl rounded-2xl overflow-hidden border border-white/10 w-[290px] shadow-[0_8px_32px_rgba(0,0,0,0.4),0_0_0_1px_rgba(255,255,255,0.05),0_0_60px_rgba(0,135,159,0.15)]">
                 {/* Image */}
-                <div className="popup-image relative h-32 overflow-hidden">
+                <div className="popup-image relative h-40 overflow-hidden group">
                   <Image
                     src={popupCity.image_url || getCityFallbackImage(popupCity.name)}
                     alt={popupCity.name}
                     fill
-                    className="object-cover"
+                    className="object-cover transition-transform duration-500 group-hover:scale-105"
                     unoptimized
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent" />
+                  {/* Multi-layer gradient for better depth */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-slate-900/40 to-transparent" />
+                  <div className="absolute inset-0 bg-gradient-to-br from-transparent via-transparent to-slate-900/20" />
 
-                {/* Close Button */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    // Hide line immediately to prevent flickering
-                    if (lineRef.current) {
-                      lineRef.current.setAttribute('opacity', '0');
-                    }
-                    setPopupCityId(null);
-                    if (popupMarkerElement) {
-                      popupMarkerElement.remove();
-                      setPopupMarkerElement(null);
-                    }
-                    // Remove highlight when popup closes
-                    if (map.current?.getLayer('highlight-marker')) {
-                      map.current.setFilter('highlight-marker', ['==', ['get', 'id'], '']);
-                    }
-                    // Restore all labels
-                    if (map.current?.getLayer('unclustered-label')) {
-                      map.current.setFilter('unclustered-label', ['!', ['has', 'point_count']]);
-                    }
-                  }}
-                  className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-slate-900/80 backdrop-blur-sm flex items-center justify-center hover:bg-slate-900 transition-colors border border-white/10"
-                >
-                  <X className="w-3 h-3 text-white" />
-                </button>
-              </div>
+                  {/* Close Button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPopupCityId(null);
+                      if (popupMarkerElement) {
+                        popupMarkerElement.remove();
+                        setPopupMarkerElement(null);
+                      }
+                      // Remove highlight when popup closes
+                      if (map.current?.getLayer('highlight-marker')) {
+                        map.current.setFilter('highlight-marker', ['==', ['get', 'id'], '']);
+                      }
+                      // Restore all labels
+                      if (map.current?.getLayer('unclustered-label')) {
+                        map.current.setFilter('unclustered-label', ['!', ['has', 'point_count']]);
+                      }
+                    }}
+                    className="absolute top-3 right-3 w-8 h-8 rounded-full bg-slate-900/95 backdrop-blur-md flex items-center justify-center hover:bg-white/10 hover:scale-110 transition-all duration-200 border border-white/20 shadow-lg group"
+                  >
+                    <X className="w-4 h-4 text-white/80 group-hover:text-white transition-colors" />
+                  </button>
+                </div>
 
               {/* Content */}
-              <div className="popup-content p-3 space-y-2.5">
+              <div className="popup-content p-4 space-y-3.5">
                 {/* Location Name */}
-                <div className="flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
+                <div className="flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-cyan-400 flex-shrink-0" />
                   <h3 className="text-sm font-semibold text-white">
                     {popupCity.name}, Florida
                   </h3>
                 </div>
+
+                {/* Divider line */}
+                <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
 
                 {/* Add to Preferences Button */}
                 <button
@@ -1077,27 +1160,51 @@ export default function FloridaMap() {
                     }
                     toggleCityPreference(popupCity);
                   }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg transition-all duration-200 hover:bg-white/5"
-                  style={{ backgroundColor: 'rgba(30, 70, 90, 0.5)' }}
+                  className={`
+                    w-full flex items-center px-4 py-3.5 rounded-xl
+                    transition-all duration-300 group relative overflow-hidden
+                    ${isCityPreferred(popupCity.id)
+                      ? 'bg-gradient-to-r from-cyan-600/20 to-cyan-500/20 hover:from-cyan-600/30 hover:to-cyan-500/30 border-2 border-cyan-500/40'
+                      : 'bg-white/5 hover:bg-white/10 border-2 border-white/10 hover:border-cyan-500/30'
+                    }
+                    ${preferredCities.length >= 2 && !isCityPreferred(popupCity.id) ? 'opacity-50 cursor-not-allowed' : ''}
+                  `}
                   disabled={preferredCities.length >= 2 && !isCityPreferred(popupCity.id)}
                 >
-                  <div
-                    className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-all duration-200"
-                    style={{
-                      border: '2px solid rgba(255, 255, 255, 0.5)',
-                      backgroundColor: isCityPreferred(popupCity.id) ? '#0d9488' : 'transparent',
-                      borderColor: isCityPreferred(popupCity.id) ? '#0d9488' : 'rgba(255, 255, 255, 0.5)'
-                    }}
-                  >
-                    {isCityPreferred(popupCity.id) && (
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3 h-3 text-white">
-                        <path fillRule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clipRule="evenodd" />
-                      </svg>
-                    )}
+                  {/* Background glow effect */}
+                  {isCityPreferred(popupCity.id) && (
+                    <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                  )}
+
+                  <div className="flex items-center gap-3 relative z-10">
+                    {/* Checkbox */}
+                    <div
+                      className={`
+                        w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0
+                        transition-all duration-300
+                        ${isCityPreferred(popupCity.id)
+                          ? 'bg-gradient-to-br from-cyan-500 to-cyan-600 border-2 border-cyan-400 shadow-lg shadow-cyan-500/30 scale-100'
+                          : 'bg-transparent border-2 border-white/30 group-hover:border-cyan-400/50'
+                        }
+                      `}
+                    >
+                      {isCityPreferred(popupCity.id) && (
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="currentColor"
+                          className="w-3.5 h-3.5 text-white animate-in fade-in zoom-in duration-200"
+                        >
+                          <path fillRule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                    </div>
+
+                    {/* Text */}
+                    <span className={`text-sm font-medium transition-colors duration-200 ${isCityPreferred(popupCity.id) ? 'text-cyan-100' : 'text-white/80 group-hover:text-white'}`}>
+                      {isCityPreferred(popupCity.id) ? 'Added to preferences' : 'Add to preferences'}
+                    </span>
                   </div>
-                  <span className="text-sm text-white/80">
-                    {isCityPreferred(popupCity.id) ? 'Added to your preferences' : 'Add to preferences'}
-                  </span>
                 </button>
               </div>
             </div>
@@ -1109,7 +1216,7 @@ export default function FloridaMap() {
 
         {/* Preferred Cities Panel - Modern Design */}
         {preferredCities.length > 0 && (
-          <div className="absolute bottom-4 md:bottom-6 md:right-6 left-1/2 md:left-auto -translate-x-1/2 md:translate-x-0 z-[1000] animate-slide-up max-w-[95vw]">
+          <div className="absolute bottom-4 md:bottom-6 md:right-6 left-1/2 md:left-auto -translate-x-1/2 md:translate-x-0 z-[10000] animate-slide-up max-w-[95vw]">
             {/* Panel Container */}
             <div className="bg-gradient-to-br from-slate-900/98 to-slate-800/98 backdrop-blur-2xl rounded-xl md:rounded-2xl border border-cyan-400/20 shadow-2xl shadow-cyan-500/10 overflow-hidden">
               {/* Header */}
@@ -1147,7 +1254,14 @@ export default function FloridaMap() {
                     }}
                   >
                     {/* Card */}
-                    <div className="relative rounded-lg md:rounded-xl overflow-hidden bg-gradient-to-br from-slate-800/80 to-slate-900/80 border border-white/10 shadow-lg hover:shadow-cyan-500/30 transition-shadow duration-300">
+                    <div
+                      onClick={() => handlePreferredCityClick(city)}
+                      className={`relative rounded-lg md:rounded-xl overflow-hidden bg-gradient-to-br from-slate-800/80 to-slate-900/80 shadow-lg hover:shadow-cyan-500/30 transition-all duration-300 cursor-pointer ${
+                        selectedPreferredCityId === city.id
+                          ? 'border-2 border-cyan-400 shadow-cyan-400/50 ring-2 ring-cyan-400/30'
+                          : 'border border-white/10 hover:border-cyan-400/50'
+                      }`}
+                    >
                       {/* City Image */}
                       <div className="relative h-16 md:h-28 overflow-hidden">
                         <Image
@@ -1162,8 +1276,15 @@ export default function FloridaMap() {
 
                         {/* Remove Button */}
                         <button
-                          onClick={() => removeCityPreference(city.id)}
-                          className="absolute top-1.5 right-1.5 md:top-2 md:right-2 w-6 h-6 md:w-8 md:h-8 rounded-full bg-slate-800/90 backdrop-blur-sm flex items-center justify-center hover:bg-slate-700/90 transition-all duration-200 border border-white/20 shadow-lg"
+                          onClick={(e) => {
+                            e.stopPropagation(); // Prevent triggering the card click
+                            removeCityPreference(city.id);
+                            // Clear selection if removing the selected city
+                            if (selectedPreferredCityId === city.id) {
+                              setSelectedPreferredCityId(null);
+                            }
+                          }}
+                          className="absolute top-1.5 right-1.5 md:top-2 md:right-2 w-6 h-6 md:w-8 md:h-8 rounded-full bg-slate-800/90 backdrop-blur-sm flex items-center justify-center hover:bg-slate-700/90 transition-all duration-200 border border-white/20 shadow-lg z-10"
                           title="Remove from preferences"
                         >
                           <Trash2 className="w-3 h-3 md:w-4 md:h-4 text-white/80" />
@@ -1218,12 +1339,12 @@ export default function FloridaMap() {
                         }
                       }
                     }}
-                    className="w-[110px] md:w-[200px] rounded-lg md:rounded-xl border-2 border-dashed border-white/20 bg-slate-800/30 flex flex-col items-center justify-center gap-1.5 md:gap-2 py-4 md:py-6 hover:border-cyan-400/40 hover:bg-slate-800/50 transition-all duration-300 group cursor-pointer"
+                    className="w-[110px] md:w-[200px] rounded-lg md:rounded-xl border-2 border-dashed border-white/20 bg-slate-800/30 flex flex-col items-center justify-center gap-1.5 md:gap-2 py-4 md:py-6 cursor-pointer"
                   >
-                    <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-slate-700/50 flex items-center justify-center group-hover:bg-cyan-500/20 transition-colors">
-                      <MapPin className="w-4 h-4 md:w-5 md:h-5 text-white/40 group-hover:text-cyan-400 transition-colors" />
+                    <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-slate-700/50 flex items-center justify-center">
+                      <MapPin className="w-4 h-4 md:w-5 md:h-5 text-white/40" />
                     </div>
-                    <p className="text-[10px] md:text-xs text-white/50 group-hover:text-white/70 transition-colors font-medium text-center px-2">Add another city</p>
+                    <p className="text-[10px] md:text-xs text-white/50 font-medium text-center px-2">2nd preference</p>
                   </div>
                 )}
               </div>

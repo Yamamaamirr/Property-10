@@ -642,6 +642,9 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                 const updateAutoFocusRegion = () => {
                   if (!map.current) return;
 
+                  // Skip auto-focus updates if disabled (during preference card animations)
+                  if ((map.current as any)._allowAutoFocusUpdate === false) return;
+
                   const zoom = map.current.getZoom();
                   const center = map.current.getCenter();
 
@@ -742,6 +745,9 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                 const MOBILE_TILT_ANGLE = 40;
                 let isTilted = false;
 
+                // Initialize auto-focus flag for mobile
+                (map.current as any)._allowAutoFocusUpdate = true;
+
                 map.current.on('idle', () => {
                   if (!map.current) return;
                   const zoom = map.current.getZoom();
@@ -758,8 +764,9 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                 });
               } else {
                 // Desktop: real-time gradual pitch updates during zoom
-                // Store flag on map instance to allow cluster animations to disable this temporarily
+                // Store flags on map instance to allow animations to disable these temporarily
                 (map.current as any)._allowPitchUpdate = true;
+                (map.current as any)._allowAutoFocusUpdate = true;
 
                 map.current.on('zoom', () => {
                   if (!map.current) return;

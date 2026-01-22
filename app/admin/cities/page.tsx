@@ -27,6 +27,8 @@ import {
 import { fetchRegions as loadRegions } from "@/app/lib/api/regions";
 import { supabase } from "@/app/lib/supabase";
 import CitiesMap from "@/app/components/admin/CitiesMap";
+import { PlacesSearch } from "@/app/components/admin/PlacesSearch";
+import { ImageUpload } from "@/app/components/admin/ImageUpload";
 import { getMapTilerStyleURL, extractFloridaCoordinates, createWorldMinusFloridaMask } from "@/app/lib/mapUtils";
 import { MAP_CONFIG, MAP_COLORS, MAP_OPACITY } from "@/app/lib/constants";
 import { toast } from "sonner";
@@ -57,11 +59,12 @@ export default function CitiesPage() {
   // Form state for new city
   const [newCity, setNewCity] = useState({
     name: "",
-    latitude: "",
-    longitude: "",
     region_id: "",
     image_url: "",
   });
+
+  // Selected place from search
+  const [selectedPlace, setSelectedPlace] = useState<{ lng: number; lat: number } | null>(null);
 
   // Delete confirmation
   const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; id: string; name: string }>({
@@ -141,7 +144,8 @@ export default function CitiesPage() {
   }, [regions]);
 
   async function handleAddCity() {
-    if (!newCity.name || !newCity.latitude || !newCity.longitude || !newCity.region_id) {
+    if (!newCity.name || !selectedPlace || !newCity.region_id) {
+      toast.error("Please search and select a city location");
       return;
     }
 
@@ -149,16 +153,7 @@ export default function CitiesPage() {
     const toastId = toast.loading(`Adding "${newCity.name}"...`);
 
     try {
-      const lat = parseFloat(newCity.latitude);
-      const lngRaw = parseFloat(newCity.longitude);
-
-      if (isNaN(lat) || isNaN(lngRaw)) {
-        toast.error("Invalid coordinates. Please enter valid latitude and longitude values.", { id: toastId });
-        return;
-      }
-
-      // Normalize longitude for Florida (convert positive to negative if needed)
-      const lng = normalizeFloridaLongitude(lngRaw);
+      const { lat, lng } = selectedPlace;
 
       const slug = newCity.name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
       const geojsonString = JSON.stringify({
@@ -181,11 +176,10 @@ export default function CitiesPage() {
 
       setNewCity({
         name: "",
-        latitude: "",
-        longitude: "",
         region_id: regions[0]?.id || "",
         image_url: "",
       });
+      setSelectedPlace(null);
       setMarkerPlaced(false);
       setAddDialogOpen(false);
       loadData();
@@ -327,14 +321,9 @@ export default function CitiesPage() {
 
         setPreviewMapInitialized(true);
 
-        // Auto-create marker at default location when map loads
-        const lat = newCity.latitude ? parseFloat(newCity.latitude) : MAP_CONFIG.INITIAL_CENTER[1];
-        const lngRaw = newCity.longitude ? parseFloat(newCity.longitude) : MAP_CONFIG.INITIAL_CENTER[0];
-        // Normalize longitude for Florida (convert positive to negative if needed)
-        const lng = normalizeFloridaLongitude(lngRaw);
-
-        if (!isNaN(lat) && !isNaN(lng)) {
-          createMarker(lat, lng, newCity.name, true);
+        // Auto-create marker if place is already selected
+        if (selectedPlace) {
+          createMarker(selectedPlace.lat, selectedPlace.lng, newCity.name, true);
         }
       });
 
@@ -625,14 +614,13 @@ export default function CitiesPage() {
       });
     });
 
-    // Update form when marker is dragged
+    // Update selected place when marker is dragged
     marker.on('dragend', () => {
       const lngLat = marker.getLngLat();
-      setNewCity(prev => ({
-        ...prev,
-        latitude: lngLat.lat.toFixed(6),
-        longitude: lngLat.lng.toFixed(6),
-      }));
+      setSelectedPlace({
+        lat: lngLat.lat,
+        lng: lngLat.lng
+      });
 
       // Just pan to the new position without zoom
       if (previewMapRef.current) {
@@ -668,39 +656,23 @@ export default function CitiesPage() {
     }
   }, []);
 
-  // Handle place marker button click
-  const handlePlaceMarker = () => {
-    const lat = newCity.latitude ? parseFloat(newCity.latitude) : MAP_CONFIG.INITIAL_CENTER[1];
-    const lngRaw = newCity.longitude ? parseFloat(newCity.longitude) : MAP_CONFIG.INITIAL_CENTER[0];
-    // Normalize longitude for Florida (convert positive to negative if needed)
-    const lng = normalizeFloridaLongitude(lngRaw);
+  // Handle place selection from search
+  const handlePlaceSelect = (place: { place_name: string; center: [number, number]; text: string }) => {
+    const [lng, lat] = place.center;
 
-    if (!isNaN(lat) && !isNaN(lng)) {
-      // Only zoom on initial placement (when marker doesn't exist yet)
+    // Update city name and coordinates
+    setNewCity(prev => ({
+      ...prev,
+      name: place.text
+    }));
+    setSelectedPlace({ lat, lng });
+
+    // Create/update marker and zoom to location
+    if (previewMapRef.current) {
       const isInitial = !markerPlaced;
-      createMarker(lat, lng, newCity.name, isInitial);
+      createMarker(lat, lng, place.text, isInitial);
     }
   };
-
-  // Update marker position when lat/lng changes (typing coordinates)
-  useEffect(() => {
-    if (!markerRef.current || !newCity.latitude || !newCity.longitude) return;
-
-    const lat = parseFloat(newCity.latitude);
-    const lngRaw = parseFloat(newCity.longitude);
-
-    if (!isNaN(lat) && !isNaN(lngRaw)) {
-      // Normalize longitude for Florida (convert positive to negative if needed)
-      const lng = normalizeFloridaLongitude(lngRaw);
-      markerRef.current.setLngLat([lng, lat]);
-      // Just pan to the new position without changing zoom
-      if (previewMapRef.current) {
-        previewMapRef.current.panTo([lng, lat], {
-          duration: 500
-        });
-      }
-    }
-  }, [newCity.latitude, newCity.longitude]);
 
   // Update marker label when city name changes
   useEffect(() => {
@@ -981,11 +953,10 @@ export default function CitiesPage() {
             // Reset form when closing dialog
             setNewCity({
               name: "",
-              latitude: "",
-              longitude: "",
               region_id: regions[0]?.id || "",
               image_url: "",
             });
+            setSelectedPlace(null);
           }
           setAddDialogOpen(open);
         }
@@ -1123,39 +1094,17 @@ export default function CitiesPage() {
               <div className="w-full md:w-80 border-t md:border-t-0 md:border-l overflow-auto p-2.5 md:p-4" style={{ borderColor: '#575c63' }}>
                 <div className="space-y-2.5 md:space-y-4">
                   <div>
-                    <Label htmlFor="city-name" className="text-[10px] md:text-xs mb-1">City Name *</Label>
-                    <Input
-                      id="city-name"
-                      value={newCity.name}
-                      onChange={(e) => setNewCity({ ...newCity, name: e.target.value })}
-                      placeholder="Enter city name"
-                      className="text-[11px] md:text-sm h-8 md:h-9"
+                    <Label className="text-[10px] md:text-xs mb-1.5 block">Search City *</Label>
+                    <PlacesSearch
+                      onPlaceSelect={handlePlaceSelect}
+                      placeholder="Search for a city in Florida..."
                       disabled={adding}
+                      value={newCity.name}
+                      onValueChange={(value) => setNewCity({ ...newCity, name: value })}
+                      restrictToFlorida={true}
                     />
-                  </div>
-
-                  <div>
-                    <Label className="text-[10px] md:text-xs mb-1">Coordinates *</Label>
-                    <div className="grid grid-cols-2 gap-2 md:gap-3">
-                      <Input
-                        id="latitude"
-                        value={newCity.latitude}
-                        onChange={(e) => setNewCity({ ...newCity, latitude: e.target.value })}
-                        placeholder="Latitude"
-                        className="text-[11px] md:text-sm h-8 md:h-9"
-                        disabled={adding}
-                      />
-                      <Input
-                        id="longitude"
-                        value={newCity.longitude}
-                        onChange={(e) => setNewCity({ ...newCity, longitude: e.target.value })}
-                        placeholder="Longitude"
-                        className="text-[11px] md:text-sm h-8 md:h-9"
-                        disabled={adding}
-                      />
-                    </div>
                     <p className="text-[9px] md:text-[10px] text-muted-foreground mt-1.5 md:mt-2">
-                      Drag the marker on the map to set the exact location
+                      Search and select a city. Drag the marker to adjust position.
                     </p>
                   </div>
 
@@ -1180,13 +1129,11 @@ export default function CitiesPage() {
                   </div>
 
                   <div>
-                    <Label htmlFor="image-url" className="text-[10px] md:text-xs mb-1">Image URL (Optional)</Label>
-                    <Input
-                      id="image-url"
+                    <Label className="text-[10px] md:text-xs mb-1.5 block">City Image (Optional)</Label>
+                    <ImageUpload
                       value={newCity.image_url}
-                      onChange={(e) => setNewCity({ ...newCity, image_url: e.target.value })}
-                      placeholder="https://example.com/image.jpg"
-                      className="text-[11px] md:text-sm h-8 md:h-9"
+                      onChange={(url) => setNewCity({ ...newCity, image_url: url })}
+                      onClear={() => setNewCity({ ...newCity, image_url: "" })}
                       disabled={adding}
                     />
                   </div>
@@ -1205,7 +1152,7 @@ export default function CitiesPage() {
               </Button>
               <Button
                 onClick={handleAddCity}
-                disabled={adding || !newCity.name || !newCity.latitude || !newCity.longitude || !newCity.region_id}
+                disabled={adding || !newCity.name || !selectedPlace || !newCity.region_id}
                 className="w-full sm:w-auto h-9 md:h-10 text-xs md:text-sm"
               >
                 {adding ? (
@@ -1391,67 +1338,18 @@ export default function CitiesPage() {
                         </Select>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <Label htmlFor="edit-latitude" className="text-[10px] md:text-xs mb-1">Latitude</Label>
-                          <Input
-                            id="edit-latitude"
-                            value={editingCity.geom?.coordinates?.[1]?.toFixed(6) || ""}
-                            onChange={(e) => {
-                              const lat = parseFloat(e.target.value);
-                              if (!isNaN(lat) && editingCity.geom) {
-                                setEditingCity({
-                                  ...editingCity,
-                                  geom: {
-                                    type: "Point",
-                                    coordinates: [editingCity.geom.coordinates[0], lat]
-                                  }
-                                });
-                                // Update marker position
-                                if (editMarkerRef.current) {
-                                  editMarkerRef.current.setLngLat([editingCity.geom.coordinates[0], lat]);
-                                }
-                              }
-                            }}
-                            placeholder="27.994402"
-                            className="text-[11px] md:text-sm h-8 md:h-9"
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="edit-longitude" className="text-[10px] md:text-xs mb-1">Longitude</Label>
-                          <Input
-                            id="edit-longitude"
-                            value={editingCity.geom?.coordinates?.[0]?.toFixed(6) || ""}
-                            onChange={(e) => {
-                              const lng = parseFloat(e.target.value);
-                              if (!isNaN(lng) && editingCity.geom) {
-                                setEditingCity({
-                                  ...editingCity,
-                                  geom: {
-                                    type: "Point",
-                                    coordinates: [lng, editingCity.geom.coordinates[1]]
-                                  }
-                                });
-                                // Update marker position
-                                if (editMarkerRef.current) {
-                                  editMarkerRef.current.setLngLat([lng, editingCity.geom.coordinates[1]]);
-                                }
-                              }
-                            }}
-                            placeholder="-81.760254"
-                            className="text-[11px] md:text-sm h-8 md:h-9"
-                          />
-                        </div>
+                      <div className="text-[9px] md:text-[10px] text-muted-foreground bg-muted/50 p-2 rounded-md">
+                        <strong>Current Location:</strong><br />
+                        Lat: {editingCity.geom?.coordinates?.[1]?.toFixed(6)}, Lng: {editingCity.geom?.coordinates?.[0]?.toFixed(6)}<br />
+                        <span className="text-[8px] md:text-[9px] opacity-75">Drag marker on map to adjust position</span>
                       </div>
 
                       <div>
-                        <Label htmlFor="edit-image" className="text-[10px] md:text-xs mb-1">Image URL (Optional)</Label>
-                        <Input
-                          id="edit-image"
+                        <Label className="text-[10px] md:text-xs mb-1.5 block">City Image (Optional)</Label>
+                        <ImageUpload
                           value={editingCity.image_url || ""}
-                          onChange={(e) => setEditingCity({ ...editingCity, image_url: e.target.value })}
-                          placeholder="https://example.com/image.jpg"
-                          className="text-[11px] md:text-sm h-8 md:h-9"
+                          onChange={(url) => setEditingCity({ ...editingCity, image_url: url })}
+                          onClear={() => setEditingCity({ ...editingCity, image_url: "" })}
                         />
                       </div>
                     </div>
