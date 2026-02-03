@@ -85,14 +85,8 @@ export default function FloridaMap() {
   const [preferredCities, setPreferredCities] = useState<City[]>([]);
   const [selectedPreferredCityId, setSelectedPreferredCityId] = useState<string | null>(null);
 
-  // Contact form modal state
-  const [showContactForm, setShowContactForm] = useState(false);
-  const [contactForm, setContactForm] = useState({
-    firstName: '',
-    lastName: '',
-    email: '',
-    phone: ''
-  });
+  // Thank you modal state
+  const [showThankYou, setShowThankYou] = useState(false);
 
   // Current zoom state
   const [currentZoom, setCurrentZoom] = useState<number>(5);
@@ -1228,13 +1222,13 @@ export default function FloridaMap() {
                   </div>
                   <button
                     onClick={() => {
-                      // Close any open popup before showing form
+                      // Close any open popup before showing thank you
                       setPopupCityId(null);
                       if (popupMarkerElement) {
                         popupMarkerElement.remove();
                         setPopupMarkerElement(null);
                       }
-                      setShowContactForm(true);
+                      setShowThankYou(true);
                     }}
                     className="px-3 py-1.5 md:px-4 md:py-2 bg-primary text-primary-foreground text-xs md:text-sm font-medium rounded-lg shadow-md hover:bg-primary/90 transition-all"
                   >
@@ -1355,121 +1349,44 @@ export default function FloridaMap() {
         {/* Subtle Vignette Effect - Focus Attention */}
         <div className="absolute inset-0 pointer-events-none z-[1] bg-gradient-radial from-transparent via-transparent to-slate-900/20" />
 
-        {/* Contact Form Modal */}
-        {showContactForm && (
-          <div className="fixed inset-0 z-[2000] flex items-center justify-center p-3 md:p-4">
+        {/* Thank You Modal */}
+        {showThankYou && (
+          <div className="fixed inset-0 z-[20000] flex items-center justify-center p-3 md:p-4">
             {/* Backdrop */}
             <div
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-              onClick={() => setShowContactForm(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-xl"
+              onClick={() => setShowThankYou(false)}
             />
 
             {/* Modal */}
-            <div className="relative w-full max-w-sm md:max-w-lg bg-gradient-to-br from-slate-900 to-slate-800 rounded-xl md:rounded-2xl border border-white/10 shadow-2xl shadow-black/50 overflow-hidden">
-              {/* Close Button */}
-              <button
-                onClick={() => setShowContactForm(false)}
-                className="absolute top-3 right-3 md:top-4 md:right-4 w-7 h-7 md:w-8 md:h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors z-10"
-              >
-                <X className="w-3.5 h-3.5 md:w-4 md:h-4 text-white" />
-              </button>
-
-              {/* Header */}
-              <div className="px-4 pt-4 pb-3 md:px-6 md:pt-6 md:pb-4">
-                <h2 className="text-base md:text-xl font-semibold text-white mb-0.5">Get Started</h2>
-                <p className="text-xs md:text-sm text-white/60">Enter your details and we&apos;ll be in touch shortly.</p>
+            <div className="relative w-full max-w-lg bg-[#1a1a2e] rounded-xl md:rounded-2xl border border-white/10 shadow-2xl shadow-black/50 px-10 md:px-14 py-7 md:py-9 flex flex-col items-center text-center">
+              {/* Checkmark Icon */}
+              <div className="w-12 h-12 rounded-full bg-sky-400 flex items-center justify-center mb-4">
+                <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
               </div>
 
-              {/* Selected Cities Preview */}
-              <div className="px-4 pb-3 md:px-6 md:pb-4">
-                <p className="text-[10px] md:text-xs text-cyan-400 font-medium uppercase tracking-wider mb-2">Your Selected Cities</p>
-                <div className="flex gap-2 md:gap-3">
-                  {preferredCities.map((city) => (
-                    <div key={city.id} className="flex-1 relative rounded-lg md:rounded-xl overflow-hidden h-16 md:h-24">
-                      <Image
-                        src={city.image_url || getCityFallbackImage(city.name)}
-                        alt={city.name}
-                        fill
-                        className="object-cover"
-                        unoptimized
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                      <div className="absolute bottom-1.5 left-2 right-2 md:bottom-2 md:left-3 md:right-3">
-                        <p className="text-white font-semibold text-xs md:text-sm">{city.name}</p>
-                        <p className="text-cyan-400/80 text-[10px] md:text-xs">Florida</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              {/* Title */}
+              <h2 className="text-lg md:text-xl font-semibold text-white mb-2.5 leading-snug">
+                Congratulations on Becoming a Member!
+              </h2>
+
+              {/* Description */}
+              <p className="text-xs md:text-sm text-white/50 leading-relaxed mb-5">
+                You&apos;ll now receive weekly property recommendations, lifestyle-matched options. Everything is personalized to your preferences and updated right in your dashboard.
+              </p>
 
               {/* Divider */}
-              <div className="h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+              <div className="w-full h-px bg-white/15 mb-5" />
 
-              {/* Form */}
-              <div className="px-4 py-3 md:px-6 md:py-5">
-                <div className="space-y-3 md:space-y-4">
-                  {/* Name Row */}
-                  <div className="grid grid-cols-2 gap-2 md:gap-3">
-                    <div>
-                      <label className="block text-[10px] md:text-xs text-white/50 mb-1 md:mb-1.5 font-medium">First Name</label>
-                      <input
-                        type="text"
-                        value={contactForm.firstName}
-                        onChange={(e) => setContactForm(prev => ({ ...prev, firstName: e.target.value }))}
-                        placeholder="John"
-                        className="w-full px-3 py-2 md:px-4 md:py-2.5 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/25 transition-all text-xs md:text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] md:text-xs text-white/50 mb-1 md:mb-1.5 font-medium">Last Name</label>
-                      <input
-                        type="text"
-                        value={contactForm.lastName}
-                        onChange={(e) => setContactForm(prev => ({ ...prev, lastName: e.target.value }))}
-                        placeholder="Doe"
-                        className="w-full px-3 py-2 md:px-4 md:py-2.5 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/25 transition-all text-xs md:text-sm"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Email */}
-                  <div>
-                    <label className="block text-[10px] md:text-xs text-white/50 mb-1 md:mb-1.5 font-medium">Email Address</label>
-                    <input
-                      type="email"
-                      value={contactForm.email}
-                      onChange={(e) => setContactForm(prev => ({ ...prev, email: e.target.value }))}
-                      placeholder="john@example.com"
-                      className="w-full px-3 py-2 md:px-4 md:py-2.5 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/25 transition-all text-xs md:text-sm"
-                    />
-                  </div>
-
-                  {/* Phone */}
-                  <div>
-                    <label className="block text-[10px] md:text-xs text-white/50 mb-1 md:mb-1.5 font-medium">Phone Number</label>
-                    <input
-                      type="tel"
-                      value={contactForm.phone}
-                      onChange={(e) => setContactForm(prev => ({ ...prev, phone: e.target.value }))}
-                      placeholder="+1 (555) 000-0000"
-                      className="w-full px-3 py-2 md:px-4 md:py-2.5 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/25 transition-all text-xs md:text-sm"
-                    />
-                  </div>
-                </div>
-
-                {/* Submit Button */}
-                <button
-                  onClick={() => {
-                    console.log('Form submitted:', { ...contactForm, cities: preferredCities.map(c => c.name) });
-                    // TODO: Add API endpoint
-                    setShowContactForm(false);
-                  }}
-                  className="w-full mt-4 md:mt-5 py-2.5 md:py-3 bg-primary text-primary-foreground font-medium rounded-lg shadow-md hover:bg-primary/90 transition-all text-sm md:text-base"
-                >
-                  Submit Request
-                </button>
-              </div>
+              {/* Button */}
+              <button
+                onClick={() => setShowThankYou(false)}
+                className="px-8 py-2 bg-white text-[#1a1a2e] font-semibold rounded-full text-xs tracking-widest hover:bg-white/90 transition-colors shadow-md"
+              >
+                LET&apos;S BEGIN
+              </button>
             </div>
           </div>
         )}

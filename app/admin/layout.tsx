@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { cn } from "@/app/lib/utils";
 import {
@@ -16,7 +17,7 @@ import {
 import { Toaster } from "@/app/components/ui/sonner";
 
 const navigation = [
-  { name: "Dashboard", href: "/admin", icon: LayoutDashboard },
+  { name: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
   { name: "Regions", href: "/admin/regions", icon: Hexagon },
   { name: "Cities", href: "/admin/cities", icon: MapPin },
 ];
@@ -28,19 +29,21 @@ export default function AdminLayout({
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pathname = usePathname();
+  const isStateSelector = pathname === '/admin/state-selector';
 
   return (
     <div className="min-h-screen bg-background">
       {/* Mobile sidebar backdrop */}
-      {sidebarOpen && (
+      {sidebarOpen && !isStateSelector && (
         <div
           className="fixed inset-0 bg-black/50 z-40 lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
-      {/* Sidebar */}
-      <aside
+      {/* Sidebar - hidden on state selector */}
+      {!isStateSelector && (
+        <aside
         className={cn(
           "fixed inset-y-0 left-0 z-50 w-64 transform transition-transform duration-300 ease-in-out lg:translate-x-0 flex flex-col shadow-xl",
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
@@ -51,11 +54,9 @@ export default function AdminLayout({
         }}
       >
         {/* Logo */}
-        <div className="flex items-center justify-between h-16 px-6" style={{ borderBottom: '1px solid #575c63' }}>
-          <Link href="/admin" className="flex items-center">
-            <span className="font-poppins font-bold text-xl text-white">
-              LOGO
-            </span>
+        <div className="flex items-center justify-between h-16 pl-8 pr-4" style={{ borderBottom: '1px solid #575c63' }}>
+          <Link href="/admin/dashboard" className="flex items-center">
+            <Image src="/1.svg" alt="Property 10" width={144} height={48} className="h-12 w-36 mb-1" />
           </Link>
           <button
             onClick={() => setSidebarOpen(false)}
@@ -70,7 +71,7 @@ export default function AdminLayout({
           {navigation.map((item) => {
             const isActive =
               pathname === item.href ||
-              (item.href !== "/admin" && pathname.startsWith(item.href));
+              (item.href !== "/admin/dashboard" && pathname.startsWith(item.href));
 
             return (
               <Link
@@ -109,10 +110,11 @@ export default function AdminLayout({
             </button>
           </div>
         </div>
-      </aside>
+        </aside>
+      )}
 
       {/* Main content */}
-      <div className="lg:pl-64">
+      <div className={isStateSelector ? '' : 'lg:pl-64'}>
         {/* Page content */}
         <main className="min-h-screen">
           {children}
@@ -120,15 +122,17 @@ export default function AdminLayout({
       </div>
 
       {/* Floating Menu Button (Mobile Only) */}
-      <div className="absolute top-3 left-3 md:top-4 md:left-4 z-20 lg:hidden">
-        <button
-          onClick={() => setSidebarOpen(true)}
-          className="w-9 h-9 md:w-10 md:h-10 rounded-md shadow-lg flex items-center justify-center text-white/70 hover:text-white transition-colors"
-          style={{ backgroundColor: '#0f1a34' }}
-        >
-          <Menu className="w-5 h-5 md:w-6 md:h-6" />
-        </button>
-      </div>
+      {!isStateSelector && (
+        <div className="absolute top-3 left-3 md:top-4 md:left-4 z-20 lg:hidden">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="w-9 h-9 md:w-10 md:h-10 rounded-md shadow-lg flex items-center justify-center text-white/70 hover:text-white transition-colors"
+            style={{ backgroundColor: '#0f1a34' }}
+          >
+            <Menu className="w-5 h-5 md:w-6 md:h-6" />
+          </button>
+        </div>
+      )}
       <Toaster position="bottom-right" richColors />
     </div>
   );

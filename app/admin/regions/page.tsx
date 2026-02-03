@@ -28,6 +28,7 @@ interface EditableRegion {
   slug: string;
   originalName: string;
   geometry: any;
+  name2?: string;
 }
 
 function createSlug(name: string): string {
@@ -93,6 +94,7 @@ export default function RegionsPage() {
   const [pendingGeojson, setPendingGeojson] = useState<GeoJSONData | null>(null);
   const [mapInitialized, setMapInitialized] = useState(false);
   const [labelPositions, setLabelPositions] = useState<Map<string, [number, number]>>(new Map());
+  const [labelPositions2, setLabelPositions2] = useState<Map<string, [number, number]>>(new Map());
 
   // Delete confirmation
   const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; id: string; name: string }>({
@@ -108,8 +110,10 @@ export default function RegionsPage() {
   });
   const [editName, setEditName] = useState("");
   const [editSlug, setEditSlug] = useState("");
+  const [editName2, setEditName2] = useState("");
   const [updating, setUpdating] = useState(false);
   const [editLabelPosition, setEditLabelPosition] = useState<[number, number] | null>(null);
+  const [editLabelPosition2, setEditLabelPosition2] = useState<[number, number] | null>(null);
 
   // Map preview refs
   const previewMapContainer = useRef<HTMLDivElement>(null);
@@ -233,7 +237,7 @@ export default function RegionsPage() {
           },
         });
 
-        // Add draggable region labels
+        // Add draggable region labels (first name)
         const labelFeatures = editableRegions.map((region, idx) => {
           const position = labelPositions.get(region.name) || [0, 0];
           return {
@@ -241,6 +245,7 @@ export default function RegionsPage() {
             properties: {
               name: region.name,
               index: idx,
+              labelType: "primary",
             },
             geometry: {
               type: "Point" as const,
@@ -274,9 +279,57 @@ export default function RegionsPage() {
           },
         });
 
-        // Make labels draggable
+        // Add draggable region labels (second name) - only for regions that have a second name
+        const labelFeatures2 = editableRegions
+          .filter(region => region.name2)
+          .map((region, idx) => {
+            const position = labelPositions2.get(region.name) || [0, 0];
+            return {
+              type: "Feature" as const,
+              properties: {
+                name: region.name2,
+                index: editableRegions.indexOf(region),
+                labelType: "secondary",
+                parentName: region.name,
+              },
+              geometry: {
+                type: "Point" as const,
+                coordinates: position,
+              },
+            };
+          });
+
+        if (labelFeatures2.length > 0) {
+          map.addSource("preview-region-labels-2", {
+            type: "geojson",
+            data: {
+              type: "FeatureCollection",
+              features: labelFeatures2 as any,
+            },
+          });
+
+          map.addLayer({
+            id: "preview-region-labels-2",
+            type: "symbol",
+            source: "preview-region-labels-2",
+            layout: {
+              "text-field": ["get", "name"],
+              "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+              "text-size": 14,
+              "text-transform": "uppercase",
+            },
+            paint: {
+              "text-color": "#ffffff",
+              "text-halo-color": "rgba(0, 0, 0, 0.8)",
+              "text-halo-width": 2,
+            },
+          });
+        }
+
+        // Make labels draggable (first label)
         let draggedFeature: any = null;
         let allFeatures: any[] = labelFeatures;
+        let allFeatures2: any[] = labelFeatures2;
 
         map.on("mouseenter", "preview-region-labels", () => {
           map.getCanvas().style.cursor = "grab";
@@ -322,8 +375,8 @@ export default function RegionsPage() {
               });
             }
 
-            // Update state
-            const regionName = draggedFeature.properties.name;
+            // Update state - use the region name from editable regions
+            const regionName = editableRegions[featureIndex].name;
             setLabelPositions((prev) => {
               const updated = new Map(prev);
               updated.set(regionName, coords as [number, number]);
@@ -340,6 +393,77 @@ export default function RegionsPage() {
           map.on("mousemove", onMove);
           map.once("mouseup", onUp);
         });
+
+        // Make second labels draggable
+        if (labelFeatures2.length > 0) {
+          map.on("mouseenter", "preview-region-labels-2", () => {
+            map.getCanvas().style.cursor = "grab";
+          });
+
+          map.on("mouseleave", "preview-region-labels-2", () => {
+            if (!draggedFeature) {
+              map.getCanvas().style.cursor = "";
+            }
+          });
+
+          map.on("mousedown", "preview-region-labels-2", (e) => {
+            if (!e.features || e.features.length === 0) return;
+            e.preventDefault();
+
+            map.getCanvas().style.cursor = "grabbing";
+            draggedFeature = e.features[0];
+            const featureIndex = draggedFeature.properties.index;
+            const parentName = draggedFeature.properties.parentName;
+
+            const onMove = (e: maplibregl.MapMouseEvent) => {
+              if (!draggedFeature) return;
+
+              map.getCanvas().style.cursor = "grabbing";
+
+              // Update feature position
+              const coords = [e.lngLat.lng, e.lngLat.lat];
+
+              // Find the index in allFeatures2 array
+              const idx2 = allFeatures2.findIndex(f => f.properties.parentName === parentName);
+              if (idx2 !== -1) {
+                const updatedFeature = {
+                  ...allFeatures2[idx2],
+                  geometry: {
+                    type: "Point" as const,
+                    coordinates: coords,
+                  },
+                };
+
+                allFeatures2[idx2] = updatedFeature;
+
+                // Update source data
+                const source = map.getSource("preview-region-labels-2") as maplibregl.GeoJSONSource;
+                if (source) {
+                  source.setData({
+                    type: "FeatureCollection",
+                    features: allFeatures2 as any,
+                  });
+                }
+              }
+
+              // Update state
+              setLabelPositions2((prev) => {
+                const updated = new Map(prev);
+                updated.set(parentName, coords as [number, number]);
+                return updated;
+              });
+            };
+
+            const onUp = () => {
+              map.getCanvas().style.cursor = "";
+              map.off("mousemove", onMove);
+              draggedFeature = null;
+            };
+
+            map.on("mousemove", onMove);
+            map.once("mouseup", onUp);
+          });
+        }
 
         // Fit map to bounds of all features
         try {
@@ -377,6 +501,120 @@ export default function RegionsPage() {
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showPreviewModal, editableRegions]);
+
+  // Update preview map labels when editableRegions change (e.g., when second name is added)
+  useEffect(() => {
+    if (!previewMapRef.current || !mapInitialized) return;
+
+    const map = previewMapRef.current;
+
+    // Update second labels layer
+    const labelFeatures2 = editableRegions
+      .filter(region => region.name2)
+      .map((region) => {
+        const position = labelPositions2.get(region.name) || [0, 0];
+        return {
+          type: "Feature" as const,
+          properties: {
+            name: region.name2,
+            index: editableRegions.indexOf(region),
+            labelType: "secondary",
+            parentName: region.name,
+          },
+          geometry: {
+            type: "Point" as const,
+            coordinates: position,
+          },
+        };
+      });
+
+    const source2 = map.getSource("preview-region-labels-2") as maplibregl.GeoJSONSource;
+
+    if (labelFeatures2.length > 0) {
+      if (source2) {
+        // Update existing source
+        source2.setData({
+          type: "FeatureCollection",
+          features: labelFeatures2 as any,
+        });
+      } else {
+        // Create source and layer if they don't exist
+        map.addSource("preview-region-labels-2", {
+          type: "geojson",
+          data: {
+            type: "FeatureCollection",
+            features: labelFeatures2 as any,
+          },
+        });
+
+        map.addLayer({
+          id: "preview-region-labels-2",
+          type: "symbol",
+          source: "preview-region-labels-2",
+          layout: {
+            "text-field": ["get", "name"],
+            "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+            "text-size": 14,
+            "text-transform": "uppercase",
+          },
+          paint: {
+            "text-color": "#ffffff",
+            "text-halo-color": "rgba(0, 0, 0, 0.8)",
+            "text-halo-width": 2,
+          },
+        });
+
+        // Add drag handlers for second labels
+        map.on("mouseenter", "preview-region-labels-2", () => {
+          map.getCanvas().style.cursor = "grab";
+        });
+
+        map.on("mouseleave", "preview-region-labels-2", () => {
+          map.getCanvas().style.cursor = "";
+        });
+
+        let draggedFeature: any = null;
+
+        map.on("mousedown", "preview-region-labels-2", (e) => {
+          if (!e.features || e.features.length === 0) return;
+          e.preventDefault();
+
+          map.getCanvas().style.cursor = "grabbing";
+          draggedFeature = e.features[0];
+          const parentName = draggedFeature.properties.parentName;
+
+          const onMove = (e: maplibregl.MapMouseEvent) => {
+            if (!draggedFeature) return;
+
+            map.getCanvas().style.cursor = "grabbing";
+            const coords = [e.lngLat.lng, e.lngLat.lat];
+
+            // Update state
+            setLabelPositions2((prev) => {
+              const updated = new Map(prev);
+              updated.set(parentName, coords as [number, number]);
+              return updated;
+            });
+          };
+
+          const onUp = () => {
+            map.getCanvas().style.cursor = "";
+            map.off("mousemove", onMove);
+            draggedFeature = null;
+          };
+
+          map.on("mousemove", onMove);
+          map.once("mouseup", onUp);
+        });
+      }
+    } else if (source2) {
+      // Clear the layer if no second names
+      source2.setData({
+        type: "FeatureCollection",
+        features: [],
+      });
+    }
+  }, [editableRegions, mapInitialized, labelPositions2]);
 
   // Initialize edit map when dialog opens
   useEffect(() => {
@@ -591,6 +829,116 @@ export default function RegionsPage() {
           map.once("mouseup", onUp);
         });
 
+        // Initialize second label position if exists
+        if (region.name_2) {
+          let labelPos2: [number, number];
+
+          if (region.label_lng_2 !== null && region.label_lat_2 !== null) {
+            labelPos2 = [region.label_lng_2, region.label_lat_2];
+          } else {
+            // Default: offset from first label
+            labelPos2 = [labelPos[0], labelPos[1] - 0.1];
+          }
+
+          setEditLabelPosition2(labelPos2);
+
+          // Add draggable second region label
+          const labelFeature2 = {
+            type: "Feature" as const,
+            properties: {
+              name: region.name_2,
+            },
+            geometry: {
+              type: "Point" as const,
+              coordinates: labelPos2,
+            },
+          };
+
+          map.addSource("edit-region-label-2", {
+            type: "geojson",
+            data: {
+              type: "FeatureCollection",
+              features: [labelFeature2] as any,
+            },
+          });
+
+          map.addLayer({
+            id: "edit-region-label-2",
+            type: "symbol",
+            source: "edit-region-label-2",
+            layout: {
+              "text-field": ["get", "name"],
+              "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+              "text-size": 14,
+              "text-transform": "uppercase",
+            },
+            paint: {
+              "text-color": "#ffffff",
+              "text-halo-color": "rgba(0, 0, 0, 0.8)",
+              "text-halo-width": 2,
+            },
+          });
+
+          // Make second label draggable
+          let draggedLabel2 = false;
+          let currentFeature2 = labelFeature2;
+
+          map.on("mouseenter", "edit-region-label-2", () => {
+            map.getCanvas().style.cursor = "grab";
+          });
+
+          map.on("mouseleave", "edit-region-label-2", () => {
+            if (!draggedLabel2) {
+              map.getCanvas().style.cursor = "";
+            }
+          });
+
+          map.on("mousedown", "edit-region-label-2", (e) => {
+            if (!e.features || e.features.length === 0) return;
+            e.preventDefault();
+
+            map.getCanvas().style.cursor = "grabbing";
+            draggedLabel2 = true;
+
+            const onMove2 = (e: maplibregl.MapMouseEvent) => {
+              if (!draggedLabel2) return;
+
+              map.getCanvas().style.cursor = "grabbing";
+
+              // Update feature position
+              const coords: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+              currentFeature2 = {
+                ...currentFeature2,
+                geometry: {
+                  type: "Point" as const,
+                  coordinates: coords,
+                },
+              };
+
+              // Update source data
+              const source = map.getSource("edit-region-label-2") as maplibregl.GeoJSONSource;
+              if (source) {
+                source.setData({
+                  type: "FeatureCollection",
+                  features: [currentFeature2] as any,
+                });
+              }
+
+              // Update state
+              setEditLabelPosition2(coords);
+            };
+
+            const onUp2 = () => {
+              map.getCanvas().style.cursor = "";
+              map.off("mousemove", onMove2);
+              draggedLabel2 = false;
+            };
+
+            map.on("mousemove", onMove2);
+            map.once("mouseup", onUp2);
+          });
+        }
+
         // Fit map to region bounds
         try {
           const bounds = new maplibregl.LngLatBounds();
@@ -625,6 +973,131 @@ export default function RegionsPage() {
 
     return () => clearTimeout(timer);
   }, [editDialog.open, editDialog.region]);
+
+  // Update edit map when second name is added/removed
+  useEffect(() => {
+    if (!editMapRef.current || !editMapInitialized || !editDialog.region) return;
+
+    const map = editMapRef.current;
+    const source2 = map.getSource("edit-region-label-2") as maplibregl.GeoJSONSource;
+
+    if (editName2.trim()) {
+      // Second name exists, show/update the label
+      if (!editLabelPosition2 && editLabelPosition) {
+        // Initialize position if not set
+        setEditLabelPosition2([editLabelPosition[0], editLabelPosition[1] - 0.1]);
+      }
+
+      const labelPos2 = editLabelPosition2 || [editLabelPosition?.[0] || 0, (editLabelPosition?.[1] || 0) - 0.1];
+
+      const labelFeature2 = {
+        type: "Feature" as const,
+        properties: {
+          name: editName2,
+        },
+        geometry: {
+          type: "Point" as const,
+          coordinates: labelPos2,
+        },
+      };
+
+      if (source2) {
+        // Update existing source
+        source2.setData({
+          type: "FeatureCollection",
+          features: [labelFeature2] as any,
+        });
+      } else {
+        // Create source and layer
+        map.addSource("edit-region-label-2", {
+          type: "geojson",
+          data: {
+            type: "FeatureCollection",
+            features: [labelFeature2] as any,
+          },
+        });
+
+        map.addLayer({
+          id: "edit-region-label-2",
+          type: "symbol",
+          source: "edit-region-label-2",
+          layout: {
+            "text-field": ["get", "name"],
+            "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+            "text-size": 14,
+            "text-transform": "uppercase",
+          },
+          paint: {
+            "text-color": "#ffffff",
+            "text-halo-color": "rgba(0, 0, 0, 0.8)",
+            "text-halo-width": 2,
+          },
+        });
+
+        // Add drag handlers
+        let draggedLabel2 = false;
+        let currentFeature2 = labelFeature2;
+
+        map.on("mouseenter", "edit-region-label-2", () => {
+          map.getCanvas().style.cursor = "grab";
+        });
+
+        map.on("mouseleave", "edit-region-label-2", () => {
+          if (!draggedLabel2) {
+            map.getCanvas().style.cursor = "";
+          }
+        });
+
+        map.on("mousedown", "edit-region-label-2", (e) => {
+          if (!e.features || e.features.length === 0) return;
+          e.preventDefault();
+
+          map.getCanvas().style.cursor = "grabbing";
+          draggedLabel2 = true;
+
+          const onMove2 = (e: maplibregl.MapMouseEvent) => {
+            if (!draggedLabel2) return;
+
+            map.getCanvas().style.cursor = "grabbing";
+            const coords: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+
+            currentFeature2 = {
+              ...currentFeature2,
+              geometry: {
+                type: "Point" as const,
+                coordinates: coords,
+              },
+            };
+
+            const source = map.getSource("edit-region-label-2") as maplibregl.GeoJSONSource;
+            if (source) {
+              source.setData({
+                type: "FeatureCollection",
+                features: [currentFeature2] as any,
+              });
+            }
+
+            setEditLabelPosition2(coords);
+          };
+
+          const onUp2 = () => {
+            map.getCanvas().style.cursor = "";
+            map.off("mousemove", onMove2);
+            draggedLabel2 = false;
+          };
+
+          map.on("mousemove", onMove2);
+          map.once("mouseup", onUp2);
+        });
+      }
+    } else if (source2) {
+      // No second name, clear the layer
+      source2.setData({
+        type: "FeatureCollection",
+        features: [],
+      });
+    }
+  }, [editName2, editMapInitialized, editLabelPosition, editLabelPosition2, editDialog.region]);
 
   async function loadRegionsData() {
     setLoading(true);
@@ -737,8 +1210,21 @@ export default function RegionsPage() {
         }
       });
 
-      // Pass custom label positions to save function
-      const count = await saveRegionsFromGeoJSON(pendingGeojson, labelPositions);
+      // Create a map of second names
+      const secondNamesMap = new Map<string, string>();
+      editableRegions.forEach(region => {
+        if (region.name2) {
+          secondNamesMap.set(region.name, region.name2);
+        }
+      });
+
+      // Pass custom label positions and second names to save function
+      const count = await saveRegionsFromGeoJSON(
+        pendingGeojson,
+        labelPositions,
+        labelPositions2,
+        secondNamesMap
+      );
 
       if (count === 0) {
         toast.error(
@@ -752,6 +1238,7 @@ export default function RegionsPage() {
         setEditableRegions([]);
         setSelectedFile(null);
         setLabelPositions(new Map());
+        setLabelPositions2(new Map());
 
         // Reload regions data (will show loading spinner on map)
         await loadRegionsData();
@@ -776,6 +1263,7 @@ export default function RegionsPage() {
     setEditableRegions([]);
     setSelectedFile(null);
     setLabelPositions(new Map());
+    setLabelPositions2(new Map());
   }
 
   async function handleDelete(id: string, name: string) {
@@ -817,12 +1305,26 @@ export default function RegionsPage() {
       const labelLng = editLabelPosition ? editLabelPosition[0] : undefined;
       const labelLat = editLabelPosition ? editLabelPosition[1] : undefined;
 
-      await updateRegion(editDialog.region.id, editName.trim(), labelLng, labelLat);
+      // Pass second name and label position
+      const name2 = editName2.trim() || null;
+      const labelLng2 = editLabelPosition2 ? editLabelPosition2[0] : undefined;
+      const labelLat2 = editLabelPosition2 ? editLabelPosition2[1] : undefined;
+
+      await updateRegion(
+        editDialog.region.id,
+        editName.trim(),
+        labelLng,
+        labelLat,
+        name2,
+        labelLng2,
+        labelLat2
+      );
       toast.success("Region updated successfully!", { id: toastId });
 
       // Close dialog
       setEditDialog({ open: false, region: null });
       setEditLabelPosition(null);
+      setEditLabelPosition2(null);
 
       // Reload regions
       await loadRegionsData();
@@ -841,7 +1343,9 @@ export default function RegionsPage() {
     setEditDialog({ open: false, region: null });
     setEditName("");
     setEditSlug("");
+    setEditName2("");
     setEditLabelPosition(null);
+    setEditLabelPosition2(null);
   }
 
   return (
@@ -963,6 +1467,7 @@ export default function RegionsPage() {
                           e.stopPropagation();
                           setEditName(region.name);
                           setEditSlug(region.slug);
+                          setEditName2(region.name_2 || "");
                           setEditDialog({ open: true, region });
                         }}
                         className="h-6 w-6 rounded-md flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-colors"
@@ -1051,6 +1556,35 @@ export default function RegionsPage() {
                       </div>
 
                       <div>
+                        <Label htmlFor={`region-name-2-${idx}`} className="text-[11px] md:text-sm mb-1">Second Name (Optional)</Label>
+                        <Input
+                          id={`region-name-2-${idx}`}
+                          value={region.name2 || ""}
+                          onChange={(e) => {
+                            setEditableRegions(prev => {
+                              const updated = [...prev];
+                              updated[idx] = {
+                                ...updated[idx],
+                                name2: e.target.value || undefined,
+                              };
+                              return updated;
+                            });
+                            // Initialize second label position if not set
+                            if (e.target.value && !labelPositions2.has(region.name)) {
+                              const firstPos = labelPositions.get(region.name) || [0, 0];
+                              setLabelPositions2(prev => {
+                                const updated = new Map(prev);
+                                updated.set(region.name, [firstPos[0], firstPos[1] - 0.1]);
+                                return updated;
+                              });
+                            }
+                          }}
+                          placeholder="Enter second name (optional)"
+                          className="text-xs md:text-base h-8 md:h-10"
+                        />
+                      </div>
+
+                      <div>
                         <Label className="text-[11px] md:text-sm mb-1">Slug (auto-generated)</Label>
                         <Input
                           value={region.slug}
@@ -1134,19 +1668,37 @@ export default function RegionsPage() {
               <div className="w-full md:w-80 border-t md:border-t-0 md:border-l overflow-auto p-2.5 md:p-4" style={{ borderColor: '#575c63' }}>
                 <div className="space-y-2.5 md:space-y-4">
                   <div>
-                    <h3 className="font-semibold text-xs md:text-base mb-1 md:mb-2">Region Name</h3>
+                    <h3 className="font-semibold text-xs md:text-base mb-1 md:mb-2">Region Names</h3>
                     <p className="text-[11px] md:text-sm text-muted-foreground mb-2 md:mb-4 leading-tight md:leading-normal">
-                      Update the region name. The slug will be updated automatically.
+                      Update the region name(s). You can add a second name if needed. Drag labels on the map to reposition them.
                     </p>
                   </div>
 
                   <div>
-                    <Label htmlFor="edit-region-name" className="text-[11px] md:text-sm mb-1">Name</Label>
+                    <Label htmlFor="edit-region-name" className="text-[11px] md:text-sm mb-1">Primary Name</Label>
                     <Input
                       id="edit-region-name"
                       value={editName}
                       onChange={(e) => handleEditNameChange(e.target.value)}
                       placeholder="Enter region name"
+                      className="text-xs md:text-base h-8 md:h-10"
+                      disabled={updating}
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="edit-region-name-2" className="text-[11px] md:text-sm mb-1">Second Name (Optional)</Label>
+                    <Input
+                      id="edit-region-name-2"
+                      value={editName2}
+                      onChange={(e) => {
+                        setEditName2(e.target.value);
+                        // Initialize second label position if not set and value is being added
+                        if (e.target.value && !editLabelPosition2 && editLabelPosition) {
+                          setEditLabelPosition2([editLabelPosition[0], editLabelPosition[1] - 0.1]);
+                        }
+                      }}
+                      placeholder="Enter second name (optional)"
                       className="text-xs md:text-base h-8 md:h-10"
                       disabled={updating}
                     />

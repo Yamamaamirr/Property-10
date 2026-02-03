@@ -7,7 +7,7 @@ import type { Region, GeoJSONData, GeoJSONFeature } from '../types';
 export async function fetchRegions(): Promise<Region[]> {
   const { data, error } = await supabase
     .from('regions')
-    .select('id, name, slug, created_at, updated_at, geom, label_lng, label_lat')
+    .select('id, name, slug, created_at, updated_at, geom, label_lng, label_lat, name_2, label_lng_2, label_lat_2')
     .order('name');
 
   if (error) {
@@ -117,10 +117,14 @@ export function calculateDefaultLabelPosition(geometry: any): [number, number] {
  * Converts GeoJSON to database format and saves regions
  * @param geojson - The GeoJSON data to save
  * @param customLabelPositions - Optional map of region names to [lng, lat] label positions
+ * @param customLabelPositions2 - Optional map of region names to [lng, lat] second label positions
+ * @param secondNames - Optional map of region names to their second name values
  */
 export async function saveRegionsFromGeoJSON(
   geojson: GeoJSONData,
-  customLabelPositions?: Map<string, [number, number]>
+  customLabelPositions?: Map<string, [number, number]>,
+  customLabelPositions2?: Map<string, [number, number]>,
+  secondNames?: Map<string, string>
 ): Promise<number> {
   const features: GeoJSONFeature[] =
     geojson.type === 'FeatureCollection'
@@ -149,15 +153,38 @@ export async function saveRegionsFromGeoJSON(
         console.log(`📤 Using calculated label position for "${name}": [${labelLng}, ${labelLat}]`);
       }
 
+      // Handle second name and label position
+      let name2: string | null = null;
+      let labelLng2: number | null = null;
+      let labelLat2: number | null = null;
+
+      if (secondNames && secondNames.has(name)) {
+        name2 = secondNames.get(name)!;
+
+        // Use custom label position if provided, otherwise calculate offset from first label
+        if (customLabelPositions2 && customLabelPositions2.has(name)) {
+          [labelLng2, labelLat2] = customLabelPositions2.get(name)!;
+          console.log(`📤 Using custom second label position for "${name}": [${labelLng2}, ${labelLat2}]`);
+        } else {
+          // Default: place second label slightly offset from first label
+          labelLng2 = labelLng;
+          labelLat2 = labelLat - 0.1; // Offset by ~0.1 degrees south
+          console.log(`📤 Using offset second label position for "${name}": [${labelLng2}, ${labelLat2}]`);
+        }
+      }
+
       console.log(`📤 Attempting to insert region: "${name}" with geometry type: ${feature.geometry.type} (normalized to ${normalizedGeometry.type})`);
 
       // Use PostGIS ST_GeomFromGeoJSON to properly insert the geometry
-      const { data, error } = await supabase.rpc('insert_region_with_geojson', {
+      const { data, error } = await supabase.rpc('insert_region_from_geojson', {
         p_name: name,
         p_slug: slug,
         p_geojson: geojsonString,
         p_label_lng: labelLng,
-        p_label_lat: labelLat
+        p_label_lat: labelLat,
+        p_name_2: name2,
+        p_label_lng_2: labelLng2,
+        p_label_lat_2: labelLat2
       });
 
       if (error) {
@@ -221,13 +248,16 @@ export async function saveRegionsFromGeoJSON(
 }
 
 /**
- * Updates a region's name and slug, and optionally label coordinates
+ * Updates a region's name and slug, and optionally label coordinates and second name
  */
 export async function updateRegion(
   id: string,
   name: string,
   labelLng?: number | null,
-  labelLat?: number | null
+  labelLat?: number | null,
+  name2?: string | null,
+  labelLng2?: number | null,
+  labelLat2?: number | null
 ): Promise<void> {
   const slug = createSlug(name);
 
@@ -243,6 +273,17 @@ export async function updateRegion(
   }
   if (labelLat !== undefined) {
     updateData.label_lat = labelLat;
+  }
+
+  // Include second name and label coordinates if provided
+  if (name2 !== undefined) {
+    updateData.name_2 = name2 || null; // Store null if empty string
+  }
+  if (labelLng2 !== undefined) {
+    updateData.label_lng_2 = labelLng2;
+  }
+  if (labelLat2 !== undefined) {
+    updateData.label_lat_2 = labelLat2;
   }
 
   const { error } = await supabase
