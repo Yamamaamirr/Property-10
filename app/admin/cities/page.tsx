@@ -76,28 +76,39 @@ export default function CitiesPage() {
   // Map preview refs for add dialog
   const previewMapContainer = useRef<HTMLDivElement>(null);
   const previewMapRef = useRef<maplibregl.Map | null>(null);
-  const markerRef = useRef<maplibregl.Marker | null>(null);
+  const previewDraggableMarker = useRef<maplibregl.Marker | null>(null);
   const [previewMapInitialized, setPreviewMapInitialized] = useState(false);
   const [markerPlaced, setMarkerPlaced] = useState(false);
 
   // Popup preview state
   const [popupOpen, setPopupOpen] = useState(false);
+  const popupOpenRef = useRef(false);
   const [markerElement, setMarkerElement] = useState<HTMLElement | null>(null);
+  const markerElementRef = useRef<HTMLElement | null>(null);
   const popupRef = useRef<HTMLDivElement>(null);
-  const lineRef = useRef<SVGLineElement>(null);
 
   // Map preview refs for edit dialog
   const editMapContainer = useRef<HTMLDivElement>(null);
   const editMapRef = useRef<maplibregl.Map | null>(null);
-  const editMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const editDraggableMarker = useRef<maplibregl.Marker | null>(null);
   const [editMapInitialized, setEditMapInitialized] = useState(false);
   const [editMarkerPlaced, setEditMarkerPlaced] = useState(false);
 
   // Popup preview state for edit dialog
   const [editPopupOpen, setEditPopupOpen] = useState(false);
+  const editPopupOpenRef = useRef(false);
   const [editMarkerElement, setEditMarkerElement] = useState<HTMLElement | null>(null);
+  const editMarkerElementRef = useRef<HTMLElement | null>(null);
   const editPopupRef = useRef<HTMLDivElement>(null);
-  const editLineRef = useRef<SVGLineElement>(null);
+
+  // Keep popup refs in sync with state
+  useEffect(() => {
+    popupOpenRef.current = popupOpen;
+  }, [popupOpen]);
+
+  useEffect(() => {
+    editPopupOpenRef.current = editPopupOpen;
+  }, [editPopupOpen]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -245,30 +256,33 @@ export default function CitiesPage() {
   // Initialize preview map when add dialog opens
   useEffect(() => {
     if (!addDialogOpen) {
-      // Restore marker label before cleanup
-      if (markerRef.current) {
-        const markerEl = markerRef.current.getElement();
-        const labelEl = markerEl?.querySelector('.marker-label') as HTMLElement;
-        if (labelEl) {
-          labelEl.style.display = 'block';
-        }
-      }
-
       // Cleanup map when dialog closes
+      if (previewDraggableMarker.current) {
+        previewDraggableMarker.current.remove();
+        previewDraggableMarker.current = null;
+      }
       if (previewMapRef.current) {
+        // Clean up highlight layer
+        if (previewMapRef.current.getLayer('preview-highlight-marker')) {
+          previewMapRef.current.removeLayer('preview-highlight-marker');
+        }
         previewMapRef.current.remove();
         previewMapRef.current = null;
-      }
-      if (markerRef.current) {
-        markerRef.current.remove();
-        markerRef.current = null;
       }
       setPreviewMapInitialized(false);
       setMarkerPlaced(false);
       setPopupOpen(false);
-      setMarkerElement(null);
+      if (markerElement) {
+        markerElement.remove();
+        setMarkerElement(null);
+        markerElementRef.current = null;
+      }
       return;
     }
+
+    // IMPORTANT: Close any open popups on the main map when dialog opens
+    // This prevents the main map popup from showing through the dialog
+    setSelectedCityId(null);
 
     // Don't reinitialize if map already exists
     if (previewMapRef.current) {
@@ -321,9 +335,9 @@ export default function CitiesPage() {
 
         setPreviewMapInitialized(true);
 
-        // Auto-create marker if place is already selected
+        // Auto-create marker using MapLibre layers if place is already selected
         if (selectedPlace) {
-          createMarker(selectedPlace.lat, selectedPlace.lng, newCity.name, true);
+          createMarkerLayer(selectedPlace.lat, selectedPlace.lng, newCity.name, true);
         }
       });
 
@@ -349,20 +363,31 @@ export default function CitiesPage() {
   useEffect(() => {
     if (!editingCity) {
       // Cleanup map when dialog closes
+      if (editDraggableMarker.current) {
+        editDraggableMarker.current.remove();
+        editDraggableMarker.current = null;
+      }
       if (editMapRef.current) {
+        // Clean up highlight layer
+        if (editMapRef.current.getLayer('edit-highlight-marker')) {
+          editMapRef.current.removeLayer('edit-highlight-marker');
+        }
         editMapRef.current.remove();
         editMapRef.current = null;
-      }
-      if (editMarkerRef.current) {
-        editMarkerRef.current.remove();
-        editMarkerRef.current = null;
       }
       setEditMapInitialized(false);
       setEditMarkerPlaced(false);
       setEditPopupOpen(false);
-      setEditMarkerElement(null);
+      if (editMarkerElement) {
+        editMarkerElement.remove();
+        setEditMarkerElement(null);
+        editMarkerElementRef.current = null;
+      }
       return;
     }
+
+    // IMPORTANT: Close any open popups on the main map when dialog opens
+    setSelectedCityId(null);
 
     // Don't reinitialize if map already exists
     if (editMapRef.current) {
@@ -432,85 +457,269 @@ export default function CitiesPage() {
           console.warn('Failed to load Florida boundary mask:', error);
         }
 
-        // Create marker for editing
-        const el = document.createElement('div');
-        el.style.cssText = `
-          cursor: pointer;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-        `;
+        // Create marker using MapLibre layers - matching main map
+        const cityGeoJSON = {
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            properties: {
+              id: 'edit-city',
+              name: editingCity.name
+            },
+            geometry: {
+              type: 'Point',
+              coordinates: [lng, lat]
+            }
+          }]
+        };
 
-        const labelEl = document.createElement('div');
-        labelEl.className = 'edit-marker-label';
-        labelEl.style.cssText = `
-          white-space: nowrap;
-          color: white;
-          font-family: 'Open Sans', sans-serif;
-          font-size: 20px;
-          font-weight: 500;
-          text-shadow: 0 0 6px rgba(0,0,0,0.9), 0 2px 8px rgba(0,0,0,0.6);
-          pointer-events: none;
-          margin-bottom: 3px;
-          padding: 2px;
-        `;
-        labelEl.textContent = editingCity.name;
+        map.addSource('edit-city', {
+          type: 'geojson',
+          data: cityGeoJSON as any
+        });
 
-        const dotEl = document.createElement('div');
-        dotEl.style.cssText = `
-          width: 8px;
-          height: 8px;
-          background-color: white;
+        // Add point layer - matching main map but always visible
+        map.addLayer({
+          id: 'edit-city-point',
+          type: 'circle',
+          source: 'edit-city',
+          paint: {
+            'circle-color': '#ffffff',
+            'circle-radius': [
+              'interpolate', ['linear'], ['zoom'],
+              6, 5,
+              10, 7,
+              14, 9
+            ],
+            'circle-stroke-width': 2.5,
+            'circle-stroke-color': 'rgba(0,0,0,0.4)',
+            'circle-opacity': 1,
+            'circle-stroke-opacity': 1
+          }
+        });
+
+        // Add label layer - matching main map but always visible
+        map.addLayer({
+          id: 'edit-city-label',
+          type: 'symbol',
+          source: 'edit-city',
+          layout: {
+            'text-field': ['get', 'name'],
+            'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+            'text-size': [
+              'interpolate', ['linear'], ['zoom'],
+              6, 11,
+              8, 13,
+              10, 14
+            ],
+            'text-offset': [0, -1.0],
+            'text-anchor': 'bottom',
+            'text-allow-overlap': true,
+            'text-ignore-placement': false
+          },
+          paint: {
+            'text-color': '#ffffff',
+            'text-halo-color': 'rgba(0, 0, 0, 0.9)',
+            'text-halo-width': 2,
+            'text-halo-blur': 0.8,
+            'text-opacity': 1
+          }
+        });
+
+        // Add visible draggable marker for dragging functionality
+        if (editDraggableMarker.current) {
+          editDraggableMarker.current.remove();
+        }
+
+        // Create draggable marker element that looks like the actual marker
+        const dragEl = document.createElement('div');
+        dragEl.style.cssText = `
+          width: 14px;
+          height: 14px;
+          background: white;
+          border: 2.5px solid rgba(0,0,0,0.4);
           border-radius: 50%;
-          box-shadow: 0 0 0 2px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.5);
+          cursor: grab;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.3);
         `;
 
-        el.appendChild(labelEl);
-        el.appendChild(dotEl);
-
-        const marker = new maplibregl.Marker({
-          element: el,
+        const draggableMarker = new maplibregl.Marker({
+          element: dragEl,
           draggable: true,
-          anchor: 'bottom'
+          anchor: 'center'
         })
           .setLngLat([lng, lat])
           .addTo(map);
 
-        editMarkerRef.current = marker;
+        draggableMarker.on('dragstart', () => {
+          dragEl.style.cursor = 'grabbing';
+          dragEl.style.boxShadow = '0 4px 8px rgba(0,0,0,0.4)';
+          // Hide the layer-based marker AND label during drag
+          if (map.getLayer('edit-city-point')) {
+            map.setLayoutProperty('edit-city-point', 'visibility', 'none');
+          }
+          if (map.getLayer('edit-city-label')) {
+            map.setLayoutProperty('edit-city-label', 'visibility', 'none');
+          }
+          if (map.getLayer('edit-highlight-marker')) {
+            map.setLayoutProperty('edit-highlight-marker', 'visibility', 'none');
+          }
+        });
 
-        // Store marker element for popup line connection
-        setTimeout(() => {
-          setEditMarkerElement(marker.getElement());
-        }, 100);
+        draggableMarker.on('drag', () => {
+          const lngLat = draggableMarker.getLngLat();
 
-        // Click to toggle popup preview
-        el.addEventListener('click', (e) => {
-          e.stopPropagation();
+          // Update marker element position if popup is open (use ref for current value)
+          if (editMarkerElementRef.current) {
+            const point = map.project([lngLat.lng, lngLat.lat]);
+            editMarkerElementRef.current.style.left = `${point.x}px`;
+            editMarkerElementRef.current.style.top = `${point.y}px`;
+          }
+        });
+
+        draggableMarker.on('dragend', () => {
+          dragEl.style.cursor = 'grab';
+          dragEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+
+          const lngLat = draggableMarker.getLngLat();
+
+          // Update editingCity geom after drag ends
+          setEditingCity(prev => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              geom: {
+                type: 'Point',
+                coordinates: [lngLat.lng, lngLat.lat]
+              }
+            };
+          });
+
+          // Update the GeoJSON source with final position
+          const source = map.getSource('edit-city') as maplibregl.GeoJSONSource;
+          if (source) {
+            source.setData({
+              type: 'FeatureCollection',
+              features: [{
+                type: 'Feature',
+                properties: {
+                  id: 'edit-city',
+                  name: editingCity.name
+                },
+                geometry: {
+                  type: 'Point',
+                  coordinates: [lngLat.lng, lngLat.lat]
+                }
+              }]
+            } as any);
+          }
+
+          // Show the layer-based marker again
+          if (map.getLayer('edit-city-point')) {
+            map.setLayoutProperty('edit-city-point', 'visibility', 'visible');
+          }
+
+          // Only show label if popup is NOT open
+          if (!editPopupOpenRef.current && map.getLayer('edit-city-label')) {
+            map.setLayoutProperty('edit-city-label', 'visibility', 'visible');
+          }
+
+          // Only show highlight if popup is open
+          if (editPopupOpenRef.current && map.getLayer('edit-highlight-marker')) {
+            map.setLayoutProperty('edit-highlight-marker', 'visibility', 'visible');
+          }
+        });
+
+        editDraggableMarker.current = draggableMarker;
+
+        // Add click handler for popup toggle
+        const clickHandler = (e: maplibregl.MapMouseEvent) => {
+          e.preventDefault();
+          e.originalEvent.stopPropagation();
+
           setEditPopupOpen(prev => {
             const newState = !prev;
+
             // Toggle label visibility
-            if (labelEl) {
-              labelEl.style.display = newState ? 'none' : 'block';
+            if (map.getLayer('edit-city-label')) {
+              if (newState) {
+                map.setLayoutProperty('edit-city-label', 'visibility', 'none');
+              } else {
+                map.setLayoutProperty('edit-city-label', 'visibility', 'visible');
+              }
             }
+
+            // Add/remove highlight layer
+            if (newState) {
+              // Add highlight marker ABOVE the point layer (not below)
+              if (!map.getLayer('edit-highlight-marker')) {
+                map.addLayer({
+                  id: 'edit-highlight-marker',
+                  type: 'circle',
+                  source: 'edit-city',
+                  paint: {
+                    'circle-color': '#00d4ff',
+                    'circle-radius': 12,
+                    'circle-opacity': 0.4,
+                    'circle-stroke-width': 3,
+                    'circle-stroke-color': '#00d4ff',
+                    'circle-stroke-opacity': 0.8
+                  }
+                });
+              }
+            } else {
+              // Remove highlight marker
+              if (map.getLayer('edit-highlight-marker')) {
+                map.removeLayer('edit-highlight-marker');
+              }
+            }
+
+            // Create/remove marker element for popup portal
+            if (newState) {
+              const el = document.createElement('div');
+              el.style.cssText = 'position: absolute; pointer-events: none;';
+              map.getContainer().appendChild(el);
+
+              // Always use current draggable marker position
+              const currentLng = editDraggableMarker.current?.getLngLat().lng ?? editingCity.geom.coordinates[0];
+              const currentLat = editDraggableMarker.current?.getLngLat().lat ?? editingCity.geom.coordinates[1];
+              const point = map.project([currentLng, currentLat]);
+              el.style.left = `${point.x}px`;
+              el.style.top = `${point.y}px`;
+
+              setEditMarkerElement(el);
+              editMarkerElementRef.current = el;
+
+              // Update position on map move
+              const updatePosition = () => {
+                // Always get fresh position from draggable marker
+                if (editDraggableMarker.current) {
+                  const lngLat = editDraggableMarker.current.getLngLat();
+                  const point = map.project([lngLat.lng, lngLat.lat]);
+                  el.style.left = `${point.x}px`;
+                  el.style.top = `${point.y}px`;
+                }
+              };
+              map.on('move', updatePosition);
+              map.on('zoom', updatePosition);
+            } else {
+              if (editMarkerElement) {
+                editMarkerElement.remove();
+                setEditMarkerElement(null);
+                editMarkerElementRef.current = null;
+              }
+            }
+
             return newState;
           });
-        });
+        };
 
-        // Update cursor on drag
-        marker.on('dragstart', () => {
-          el.style.cursor = 'grabbing';
+        map.on('click', 'edit-city-point', clickHandler);
+        map.on('mouseenter', 'edit-city-point', () => {
+          map.getCanvas().style.cursor = 'pointer';
         });
-
-        marker.on('dragend', () => {
-          el.style.cursor = 'grab';
-          const lngLat = marker.getLngLat();
-          setEditingCity(prev => prev ? {
-            ...prev,
-            geom: {
-              type: "Point",
-              coordinates: [lngLat.lng, lngLat.lat]
-            }
-          } : null);
+        map.on('mouseleave', 'edit-city-point', () => {
+          map.getCanvas().style.cursor = '';
         });
 
         setEditMarkerPlaced(true);
@@ -524,137 +733,320 @@ export default function CitiesPage() {
 
   // Update edit marker label when city name changes
   useEffect(() => {
-    if (!editMarkerRef.current || !editMarkerPlaced || !editingCity?.name) return;
+    if (!editMapRef.current || !editMarkerPlaced || !editingCity?.name || !editingCity?.geom) return;
 
-    const markerElement = editMarkerRef.current.getElement();
-    if (!markerElement) return;
+    const map = editMapRef.current;
+    const source = map.getSource('edit-city') as maplibregl.GeoJSONSource;
 
-    const labelElement = markerElement.querySelector('.edit-marker-label');
-    if (labelElement) {
-      labelElement.textContent = editingCity.name;
+    if (source) {
+      // Update GeoJSON with new city name
+      source.setData({
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          properties: {
+            id: 'edit-city',
+            name: editingCity.name
+          },
+          geometry: editingCity.geom
+        }]
+      } as any);
     }
-  }, [editingCity?.name, editMarkerPlaced, editingCity]);
+  }, [editingCity?.name, editMarkerPlaced, editingCity?.geom]);
 
-  // Function to create custom marker with city name
-  const createMarker = useCallback((lat: number, lng: number, cityName: string, isInitialPlacement: boolean = false) => {
+  // Function to create marker using MapLibre layers - matching main map
+  const createMarkerLayer = useCallback((lat: number, lng: number, cityName: string, isInitialPlacement: boolean = false) => {
     if (!previewMapRef.current) return;
 
-    // Remove existing marker if any
-    const isUpdate = markerRef.current !== null;
-    if (markerRef.current) {
-      markerRef.current.remove();
+    const map = previewMapRef.current;
+    const isUpdate = markerPlaced;
+
+    // Create GeoJSON for single city
+    const cityGeoJSON = {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        properties: {
+          id: 'preview-city',
+          name: cityName || 'City Location'
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: [lng, lat]
+        }
+      }]
+    };
+
+    // Add or update source
+    const existingSource = map.getSource('preview-city') as maplibregl.GeoJSONSource;
+    if (existingSource) {
+      existingSource.setData(cityGeoJSON as any);
+    } else {
+      map.addSource('preview-city', {
+        type: 'geojson',
+        data: cityGeoJSON as any
+      });
     }
 
-    // Create custom marker element with proper structure
-    const el = document.createElement('div');
-    el.className = 'custom-city-marker';
-    el.style.cssText = `
-      cursor: pointer;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    `;
+    // Add point layer - matching main map but always visible
+    if (!map.getLayer('preview-city-point')) {
+      map.addLayer({
+        id: 'preview-city-point',
+        type: 'circle',
+        source: 'preview-city',
+        paint: {
+          'circle-color': '#ffffff',
+          'circle-radius': [
+            'interpolate', ['linear'], ['zoom'],
+            6, 5,
+            10, 7,
+            14, 9
+          ],
+          'circle-stroke-width': 2.5,
+          'circle-stroke-color': 'rgba(0,0,0,0.4)',
+          'circle-opacity': 1,
+          'circle-stroke-opacity': 1
+        }
+      });
+    }
 
-    // Create label element
-    const labelEl = document.createElement('div');
-    labelEl.className = 'marker-label';
-    labelEl.style.cssText = `
-      white-space: nowrap;
-      color: white;
-      font-family: 'Open Sans', sans-serif;
-      font-size: 20px;
-      font-weight: 500;
-      text-shadow: 0 0 6px rgba(0,0,0,0.9), 0 2px 8px rgba(0,0,0,0.6);
-      pointer-events: none;
-      margin-bottom: 3px;
-      padding: 2px;
-    `;
-    labelEl.textContent = cityName || 'City Location';
+    // Add label layer - matching main map but always visible
+    if (!map.getLayer('preview-city-label')) {
+      map.addLayer({
+        id: 'preview-city-label',
+        type: 'symbol',
+        source: 'preview-city',
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+          'text-size': [
+            'interpolate', ['linear'], ['zoom'],
+            6, 11,
+            8, 13,
+            10, 14
+          ],
+          'text-offset': [0, -1.0],
+          'text-anchor': 'bottom',
+          'text-allow-overlap': true,
+          'text-ignore-placement': false
+        },
+        paint: {
+          'text-color': '#ffffff',
+          'text-halo-color': 'rgba(0, 0, 0, 0.9)',
+          'text-halo-width': 2,
+          'text-halo-blur': 0.8,
+          'text-opacity': 1
+        }
+      });
+    }
 
-    // Create dot element
-    const dotEl = document.createElement('div');
-    dotEl.className = 'marker-dot';
-    dotEl.style.cssText = `
-      width: 8px;
-      height: 8px;
-      background-color: white;
+    // Add click handler for popup toggle
+    if (!markerPlaced) {
+      const clickHandler = (e: maplibregl.MapMouseEvent) => {
+        e.preventDefault();
+        e.originalEvent.stopPropagation();
+
+        setPopupOpen(prev => {
+          const newState = !prev;
+
+          // Toggle label visibility
+          if (map.getLayer('preview-city-label')) {
+            if (newState) {
+              map.setLayoutProperty('preview-city-label', 'visibility', 'none');
+            } else {
+              map.setLayoutProperty('preview-city-label', 'visibility', 'visible');
+            }
+          }
+
+          // Add/remove highlight layer
+          if (newState) {
+            // Add highlight marker ABOVE the point layer (not below)
+            if (!map.getLayer('preview-highlight-marker')) {
+              map.addLayer({
+                id: 'preview-highlight-marker',
+                type: 'circle',
+                source: 'preview-city',
+                paint: {
+                  'circle-color': '#00d4ff',
+                  'circle-radius': 12,
+                  'circle-opacity': 0.4,
+                  'circle-stroke-width': 3,
+                  'circle-stroke-color': '#00d4ff',
+                  'circle-stroke-opacity': 0.8
+                }
+              });
+            }
+          } else {
+            // Remove highlight marker
+            if (map.getLayer('preview-highlight-marker')) {
+              map.removeLayer('preview-highlight-marker');
+            }
+          }
+
+          // Create/remove marker element for popup portal
+          if (newState) {
+            const el = document.createElement('div');
+            el.style.cssText = 'position: absolute; pointer-events: none;';
+            map.getContainer().appendChild(el);
+
+            // Always use current draggable marker position
+            const currentLng = previewDraggableMarker.current?.getLngLat().lng ?? lng;
+            const currentLat = previewDraggableMarker.current?.getLngLat().lat ?? lat;
+            const point = map.project([currentLng, currentLat]);
+            el.style.left = `${point.x}px`;
+            el.style.top = `${point.y}px`;
+
+            setMarkerElement(el);
+            markerElementRef.current = el;
+
+            // Update position on map move
+            const updatePosition = () => {
+              // Always get fresh position from draggable marker
+              if (previewDraggableMarker.current) {
+                const lngLat = previewDraggableMarker.current.getLngLat();
+                const point = map.project([lngLat.lng, lngLat.lat]);
+                el.style.left = `${point.x}px`;
+                el.style.top = `${point.y}px`;
+              }
+            };
+            map.on('move', updatePosition);
+            map.on('zoom', updatePosition);
+          } else {
+            if (markerElement) {
+              markerElement.remove();
+              setMarkerElement(null);
+              markerElementRef.current = null;
+            }
+          }
+
+          return newState;
+        });
+      };
+
+      map.on('click', 'preview-city-point', clickHandler);
+      map.on('mouseenter', 'preview-city-point', () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', 'preview-city-point', () => {
+        map.getCanvas().style.cursor = '';
+      });
+    }
+
+    setMarkerPlaced(true);
+
+    // Add visible draggable marker for dragging functionality
+    if (previewDraggableMarker.current) {
+      previewDraggableMarker.current.remove();
+    }
+
+    // Create draggable marker element that looks like the actual marker
+    const dragEl = document.createElement('div');
+    dragEl.style.cssText = `
+      width: 14px;
+      height: 14px;
+      background: white;
+      border: 2.5px solid rgba(0,0,0,0.4);
       border-radius: 50%;
-      box-shadow: 0 0 0 2px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.5);
+      cursor: grab;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
     `;
 
-    // Append elements
-    el.appendChild(labelEl);
-    el.appendChild(dotEl);
-
-    const marker = new maplibregl.Marker({
-      element: el,
+    const draggableMarker = new maplibregl.Marker({
+      element: dragEl,
       draggable: true,
-      anchor: 'bottom'
+      anchor: 'center'
     })
       .setLngLat([lng, lat])
-      .addTo(previewMapRef.current);
+      .addTo(map);
 
-    markerRef.current = marker;
-
-    // Store marker element for popup line connection
-    setTimeout(() => {
-      setMarkerElement(marker.getElement());
-    }, 100);
-
-    // Click to toggle popup preview
-    el.addEventListener('click', (e) => {
-      e.stopPropagation();
-      setPopupOpen(prev => {
-        const newState = !prev;
-        // Toggle label visibility
-        if (labelEl) {
-          labelEl.style.display = newState ? 'none' : 'block';
-        }
-        return newState;
-      });
+    draggableMarker.on('dragstart', () => {
+      dragEl.style.cursor = 'grabbing';
+      dragEl.style.boxShadow = '0 4px 8px rgba(0,0,0,0.4)';
+      // Hide the layer-based marker AND label during drag
+      if (map.getLayer('preview-city-point')) {
+        map.setLayoutProperty('preview-city-point', 'visibility', 'none');
+      }
+      if (map.getLayer('preview-city-label')) {
+        map.setLayoutProperty('preview-city-label', 'visibility', 'none');
+      }
+      if (map.getLayer('preview-highlight-marker')) {
+        map.setLayoutProperty('preview-highlight-marker', 'visibility', 'none');
+      }
     });
 
-    // Update selected place when marker is dragged
-    marker.on('dragend', () => {
-      const lngLat = marker.getLngLat();
+    draggableMarker.on('drag', () => {
+      const lngLat = draggableMarker.getLngLat();
+
+      // Update marker element position if popup is open (use ref for current value)
+      if (markerElementRef.current) {
+        const point = map.project([lngLat.lng, lngLat.lat]);
+        markerElementRef.current.style.left = `${point.x}px`;
+        markerElementRef.current.style.top = `${point.y}px`;
+      }
+    });
+
+    draggableMarker.on('dragend', () => {
+      dragEl.style.cursor = 'grab';
+      dragEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+
+      const lngLat = draggableMarker.getLngLat();
+
+      // Update selectedPlace after drag ends
       setSelectedPlace({
         lat: lngLat.lat,
         lng: lngLat.lng
       });
 
-      // Just pan to the new position without zoom
-      if (previewMapRef.current) {
-        previewMapRef.current.panTo([lngLat.lng, lngLat.lat], {
-          duration: 300
-        });
+      // Update the GeoJSON source with final position
+      const source = map.getSource('preview-city') as maplibregl.GeoJSONSource;
+      if (source) {
+        source.setData({
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            properties: {
+              id: 'preview-city',
+              name: cityName || 'City Location'
+            },
+            geometry: {
+              type: 'Point',
+              coordinates: [lngLat.lng, lngLat.lat]
+            }
+          }]
+        } as any);
+      }
+
+      // Show the layer-based marker again
+      if (map.getLayer('preview-city-point')) {
+        map.setLayoutProperty('preview-city-point', 'visibility', 'visible');
+      }
+
+      // Only show label if popup is NOT open
+      if (!popupOpenRef.current && map.getLayer('preview-city-label')) {
+        map.setLayoutProperty('preview-city-label', 'visibility', 'visible');
+      }
+
+      // Only show highlight if popup is open
+      if (popupOpenRef.current && map.getLayer('preview-highlight-marker')) {
+        map.setLayoutProperty('preview-highlight-marker', 'visibility', 'visible');
       }
     });
 
-    // Update cursor style on drag
-    marker.on('dragstart', () => {
-      el.style.cursor = 'grabbing';
-    });
+    previewDraggableMarker.current = draggableMarker;
 
-    marker.on('dragend', () => {
-      el.style.cursor = 'grab';
-    });
-
-    setMarkerPlaced(true);
-
-    // Only fly with zoom on initial placement, otherwise just pan
+    // Only fly with zoom on initial placement
     if (isInitialPlacement && !isUpdate) {
-      previewMapRef.current.flyTo({
+      map.flyTo({
         center: [lng, lat],
         zoom: 10,
         duration: 800
       });
     } else if (!isUpdate) {
-      // Pan without zoom change for updates
-      previewMapRef.current.panTo([lng, lat], {
+      map.panTo([lng, lat], {
         duration: 500
       });
     }
-  }, []);
+  }, [markerPlaced, markerElement]);
 
   // Handle place selection from search
   const handlePlaceSelect = (place: { place_name: string; center: [number, number]; text: string }) => {
@@ -667,136 +1059,39 @@ export default function CitiesPage() {
     }));
     setSelectedPlace({ lat, lng });
 
-    // Create/update marker and zoom to location
+    // Create/update marker layer and zoom to location
     if (previewMapRef.current) {
       const isInitial = !markerPlaced;
-      createMarker(lat, lng, place.text, isInitial);
+      createMarkerLayer(lat, lng, place.text, isInitial);
     }
   };
 
   // Update marker label when city name changes
   useEffect(() => {
-    if (!markerRef.current || !markerPlaced) return;
+    if (!previewMapRef.current || !markerPlaced || !selectedPlace) return;
 
-    const markerElement = markerRef.current.getElement();
-    if (!markerElement) return;
-
-    // Update the city name label in the marker
-    const labelElement = markerElement.querySelector('.marker-label');
-    if (labelElement) {
-      labelElement.textContent = newCity.name || 'City Location';
-    }
-  }, [newCity.name, markerPlaced]);
-
-  // Update connecting line position between popup and marker (add dialog)
-  useEffect(() => {
-    if (!popupOpen || !markerElement || !lineRef.current || !previewMapContainer.current) {
-      return;
-    }
-
-    const updateLine = () => {
-      requestAnimationFrame(() => {
-        const container = previewMapContainer.current?.getBoundingClientRect();
-        const marker = markerElement?.getBoundingClientRect();
-        const popup = popupRef.current?.getBoundingClientRect();
-        const line = lineRef.current;
-
-        if (!container || !marker || !popup || !line) return;
-
-        const centerX = marker.left - container.left + marker.width / 2;
-
-        // Popup is always above marker: line goes from popup bottom to marker top
-        const lineStartY = popup.bottom - container.top;
-        const lineEndY = marker.top - container.top;
-
-        line.setAttribute("x1", centerX.toString());
-        line.setAttribute("y1", lineStartY.toString());
-        line.setAttribute("x2", centerX.toString());
-        line.setAttribute("y2", lineEndY.toString());
-      });
-    };
-
-    // Initial line update
-    updateLine();
-
-    // Update line during map movement and marker drag
     const map = previewMapRef.current;
-    const marker = markerRef.current;
+    const source = map.getSource('preview-city') as maplibregl.GeoJSONSource;
 
-    if (map) {
-      map.on('move', updateLine);
-      map.on('zoom', updateLine);
+    if (source) {
+      // Update GeoJSON with new city name
+      source.setData({
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          properties: {
+            id: 'preview-city',
+            name: newCity.name || 'City Location'
+          },
+          geometry: {
+            type: 'Point',
+            coordinates: [selectedPlace.lng, selectedPlace.lat]
+          }
+        }]
+      } as any);
     }
+  }, [newCity.name, markerPlaced, selectedPlace]);
 
-    if (marker) {
-      marker.on('drag', updateLine);
-    }
-
-    return () => {
-      if (map) {
-        map.off('move', updateLine);
-        map.off('zoom', updateLine);
-      }
-      if (marker) {
-        marker.off('drag', updateLine);
-      }
-    };
-  }, [popupOpen, markerElement]);
-
-  // Update connecting line position between popup and marker (edit dialog)
-  useEffect(() => {
-    if (!editPopupOpen || !editMarkerElement || !editLineRef.current || !editMapContainer.current) {
-      return;
-    }
-
-    const updateLine = () => {
-      requestAnimationFrame(() => {
-        const container = editMapContainer.current?.getBoundingClientRect();
-        const marker = editMarkerElement?.getBoundingClientRect();
-        const popup = editPopupRef.current?.getBoundingClientRect();
-        const line = editLineRef.current;
-
-        if (!container || !marker || !popup || !line) return;
-
-        const centerX = marker.left - container.left + marker.width / 2;
-
-        // Popup is always above marker: line goes from popup bottom to marker top
-        const lineStartY = popup.bottom - container.top;
-        const lineEndY = marker.top - container.top;
-
-        line.setAttribute("x1", centerX.toString());
-        line.setAttribute("y1", lineStartY.toString());
-        line.setAttribute("x2", centerX.toString());
-        line.setAttribute("y2", lineEndY.toString());
-      });
-    };
-
-    // Initial line update
-    updateLine();
-
-    // Update line during map movement and marker drag
-    const map = editMapRef.current;
-    const marker = editMarkerRef.current;
-
-    if (map) {
-      map.on('move', updateLine);
-      map.on('zoom', updateLine);
-    }
-
-    if (marker) {
-      marker.on('drag', updateLine);
-    }
-
-    return () => {
-      if (map) {
-        map.off('move', updateLine);
-        map.off('zoom', updateLine);
-      }
-      if (marker) {
-        marker.off('drag', updateLine);
-      }
-    };
-  }, [editPopupOpen, editMarkerElement]);
 
   return (
     <div className="relative h-screen">
@@ -804,15 +1099,21 @@ export default function CitiesPage() {
         @keyframes popupEnter {
           0% {
             opacity: 0;
-            transform: translateX(-50%) translateY(8px) scale(0.96);
+            transform: translateX(-50%) translateY(16px) scale(0.92);
+            filter: blur(4px);
+          }
+          50% {
+            opacity: 0.8;
+            filter: blur(2px);
           }
           100% {
             opacity: 1;
             transform: translateX(-50%) translateY(0) scale(1);
+            filter: blur(0px);
           }
         }
         .popup-enter {
-          animation: popupEnter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          animation: popupEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
       `}</style>
       {/* Map Container */}
@@ -901,7 +1202,7 @@ export default function CitiesPage() {
                 {cities.map((city) => (
                   <div
                     key={city.id}
-                    onClick={() => setSelectedCityId(city.id === selectedCityId ? null : city.id)}
+                    onClick={() => setSelectedCityId(city.id)}
                     className="group flex items-center justify-between gap-2 px-2 py-1 md:px-2.5 md:py-1.5 rounded-md bg-white/5 hover:bg-white/10 transition-all cursor-pointer"
                     style={{
                       border: selectedCityId === city.id ? '1px solid #4a9eff' : '1px solid #575c63',
@@ -962,7 +1263,7 @@ export default function CitiesPage() {
         }
       }}>
         <DialogContent className="max-w-6xl w-full h-full md:w-[90vw] md:h-[90vh] p-0 gap-0 border-0">
-          <div className="flex flex-col h-full">
+          <div className="absolute inset-0 flex flex-col">
             <DialogHeader className="px-3 py-2 md:px-6 md:py-4 shrink-0" style={{ borderBottom: '1px solid #575c63' }}>
               <DialogTitle className="text-sm md:text-lg">Add New City</DialogTitle>
               <p className="text-[11px] md:text-sm text-muted-foreground">
@@ -970,7 +1271,7 @@ export default function CitiesPage() {
               </p>
             </DialogHeader>
 
-            <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+            <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-auto md:overflow-hidden">
               {/* Map Preview */}
               <div className="relative bg-gray-100 dark:bg-gray-900 h-[35vh] md:h-auto md:flex-1 overflow-hidden">
                 {!previewMapInitialized && (
@@ -986,103 +1287,118 @@ export default function CitiesPage() {
                   className="absolute inset-0 w-full h-full"
                 />
 
-                {/* Connecting Line */}
-                {popupOpen && (
-                  <svg
-                    className="absolute inset-0 pointer-events-none z-20"
-                    style={{ width: "100%", height: "100%" }}
-                  >
-                    <line
-                      ref={lineRef}
-                      stroke="#8ce3ff"
-                      strokeWidth="1.5"
-                      strokeDasharray="3 2"
-                      opacity="0.7"
-                    />
-                  </svg>
-                )}
-
                 {/* Popup Card - rendered via Portal inside marker element */}
                 {popupOpen && markerElement && createPortal(
                   <div
                     ref={popupRef}
                     className="absolute pointer-events-auto popup-enter"
                     style={{
-                      bottom: '50px',
+                      bottom: '20px',
                       left: '50%',
                       transform: 'translateX(-50%)',
-                      width: 'min(85vw, 240px)',
                       zIndex: 9999,
                     }}
                   >
-                    <div className="bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-xl rounded-xl overflow-hidden shadow-2xl border border-white/10">
-                      {/* Image */}
-                      <div className="relative h-24 overflow-hidden">
-                        <Image
-                          src={newCity.image_url || "https://images.unsplash.com/photo-1505881502353-a1986add3762?w=800&auto=format&fit=crop"}
-                          alt={newCity.name || "City"}
-                          fill
-                          className="object-cover"
-                          unoptimized
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent" />
-
-                        {/* Close Button */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setPopupOpen(false);
-                            // Show the marker label again
-                            if (markerRef.current) {
-                              const markerEl = markerRef.current.getElement();
-                              const labelEl = markerEl?.querySelector('.marker-label') as HTMLElement;
-                              if (labelEl) {
-                                labelEl.style.display = 'block';
-                              }
-                            }
-                          }}
-                          className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-slate-900/80 backdrop-blur-sm flex items-center justify-center hover:bg-slate-900 transition-colors border border-white/10"
-                        >
-                          <X className="w-3 h-3 text-white" />
-                        </button>
+                    <div className="relative">
+                      {/* Premium connector - arrow pointing down */}
+                      <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 flex items-center justify-center">
+                        <div className="relative flex items-center justify-center">
+                          {/* Outer glow */}
+                          <div className="absolute w-0 h-0 border-l-[11px] border-l-transparent border-r-[11px] border-r-transparent border-t-[13px]" style={{ borderTopColor: 'rgba(222, 233, 240, 0.3)' }} />
+                          {/* Main arrow */}
+                          <div className="relative w-0 h-0 border-l-[10px] border-l-transparent border-r-[10px] border-r-transparent border-t-[12px]" style={{ borderTopColor: '#DEE9F0', filter: 'drop-shadow(0 2px 4px rgba(222, 233, 240, 0.4))' }} />
+                        </div>
                       </div>
 
-                      {/* Content */}
-                      <div className="p-3 space-y-3">
-                        {/* Location Name */}
-                        <div className="flex items-center gap-1.5">
-                          <MapPin className="w-3 h-3 text-cyan-400 flex-shrink-0" />
-                          <h3 className="text-xs font-semibold text-white">
-                            {newCity.name || "City Location"}, Florida
-                          </h3>
+                      <div className="bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-xl rounded-2xl overflow-hidden border border-white/10 w-[290px] shadow-[0_8px_32px_rgba(0,0,0,0.4),0_0_0_1px_rgba(255,255,255,0.05),0_0_60px_rgba(0,135,159,0.15)]">
+                        {/* Image */}
+                        <div className="popup-image relative h-40 overflow-hidden group">
+                          <Image
+                            src={newCity.image_url || "https://images.unsplash.com/photo-1505881502353-a1986add3762?w=800&auto=format&fit=crop"}
+                            alt={newCity.name || "City"}
+                            fill
+                            className="object-cover transition-transform duration-500 group-hover:scale-105"
+                            unoptimized
+                          />
+                          {/* Multi-layer gradient for better depth */}
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-slate-900/40 to-transparent" />
+                          <div className="absolute inset-0 bg-gradient-to-br from-transparent via-transparent to-slate-900/20" />
+
+                          {/* Close Button */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPopupOpen(false);
+                              // Show the marker label again
+                              if (previewMapRef.current?.getLayer('preview-city-label')) {
+                                previewMapRef.current.setLayoutProperty('preview-city-label', 'visibility', 'visible');
+                              }
+                              // Remove highlight marker
+                              if (previewMapRef.current?.getLayer('preview-highlight-marker')) {
+                                previewMapRef.current.removeLayer('preview-highlight-marker');
+                              }
+                              // Remove marker element
+                              if (markerElement) {
+                                markerElement.remove();
+                                setMarkerElement(null);
+                                markerElementRef.current = null;
+                              }
+                            }}
+                            className="absolute top-3 right-3 w-8 h-8 rounded-full bg-slate-900/95 backdrop-blur-md flex items-center justify-center hover:bg-white/10 hover:scale-110 transition-all duration-200 border border-white/20 shadow-lg group"
+                          >
+                            <X className="w-4 h-4 text-white/80 group-hover:text-white transition-colors" />
+                          </button>
                         </div>
 
-                        {/* Add to Preferences Button */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            // Toggle preference - for now just visual feedback
-                            const checkbox = e.currentTarget.querySelector('.preference-checkbox') as HTMLElement;
-                            if (checkbox) {
-                              const isChecked = checkbox.dataset.checked === 'true';
-                              checkbox.dataset.checked = (!isChecked).toString();
-                              checkbox.innerHTML = !isChecked ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-3 h-3 text-white"><path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clip-rule="evenodd" /></svg>' : '';
-                              checkbox.style.backgroundColor = !isChecked ? '#0d9488' : 'transparent';
-                              checkbox.style.borderColor = !isChecked ? '#0d9488' : 'rgba(255, 255, 255, 0.5)';
-                            }
-                          }}
-                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 hover:bg-white/5"
-                          style={{ backgroundColor: 'rgba(30, 70, 90, 0.5)' }}
-                        >
-                          <div
-                            className="preference-checkbox w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-all duration-200"
-                            data-checked="false"
-                            style={{ border: '2px solid rgba(255, 255, 255, 0.5)' }}
-                          />
-                          <span className="text-xs text-white/80">
-                            Add to preferences
-                          </span>
-                        </button>
+                        {/* Content */}
+                        <div className="popup-content p-4 space-y-3.5">
+                          {/* Location Name */}
+                          <div className="flex items-center gap-2">
+                            <MapPin className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+                            <h3 className="text-sm font-semibold text-white">
+                              {newCity.name || "City Location"}, Florida
+                            </h3>
+                          </div>
+
+                          {/* Divider line */}
+                          <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+
+                          {/* Add to Preferences Button - Visual feedback only */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const checkbox = e.currentTarget.querySelector('.preference-checkbox') as HTMLElement;
+                              if (checkbox) {
+                                const isChecked = checkbox.dataset.checked === 'true';
+                                checkbox.dataset.checked = (!isChecked).toString();
+                                checkbox.innerHTML = !isChecked ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-3.5 h-3.5 text-white animate-in fade-in zoom-in duration-200"><path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clip-rule="evenodd" /></svg>' : '';
+                                checkbox.style.background = !isChecked ? 'linear-gradient(to bottom right, #06b6d4, #0891b2)' : 'transparent';
+                                checkbox.style.borderColor = !isChecked ? '#22d3ee' : 'rgba(255, 255, 255, 0.3)';
+                                checkbox.style.boxShadow = !isChecked ? '0 10px 15px -3px rgba(6, 182, 212, 0.3)' : '';
+                                const button = e.currentTarget as HTMLElement;
+                                button.className = !isChecked
+                                  ? 'w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-300 group relative overflow-hidden bg-gradient-to-r from-cyan-600/20 to-cyan-500/20 hover:from-cyan-600/30 hover:to-cyan-500/30 border-2 border-cyan-500/40'
+                                  : 'w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-300 group relative overflow-hidden bg-white/5 hover:bg-white/10 border-2 border-white/10 hover:border-cyan-500/30';
+                                const text = button.querySelector('.button-text') as HTMLElement;
+                                if (text) {
+                                  text.textContent = !isChecked ? 'Added to preferences' : 'Add to preferences';
+                                  text.className = !isChecked ? 'button-text text-sm font-medium transition-colors duration-200 text-cyan-100' : 'button-text text-sm font-medium transition-colors duration-200 text-white/80 group-hover:text-white';
+                                }
+                              }
+                            }}
+                            className="w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-300 group relative overflow-hidden bg-white/5 hover:bg-white/10 border-2 border-white/10 hover:border-cyan-500/30"
+                          >
+                            <div className="flex items-center gap-3 relative z-10">
+                              <div
+                                className="preference-checkbox w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 transition-all duration-300 bg-transparent border-2 border-white/30 group-hover:border-cyan-400/50"
+                                data-checked="false"
+                              />
+                              <span className="button-text text-sm font-medium transition-colors duration-200 text-white/80 group-hover:text-white">
+                                Add to preferences
+                              </span>
+                            </div>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>,
@@ -1091,7 +1407,7 @@ export default function CitiesPage() {
               </div>
 
               {/* Form */}
-              <div className="w-full md:w-80 border-t md:border-t-0 md:border-l overflow-auto p-2.5 md:p-4" style={{ borderColor: '#575c63' }}>
+              <div className="w-full md:w-80 md:overflow-auto border-t md:border-t-0 md:border-l p-2.5 md:p-4" style={{ borderColor: '#575c63' }}>
                 <div className="space-y-2.5 md:space-y-4">
                   <div>
                     <Label className="text-[10px] md:text-xs mb-1.5 block">Search City *</Label>
@@ -1176,7 +1492,7 @@ export default function CitiesPage() {
       {/* Edit City Dialog */}
       <Dialog open={!!editingCity} onOpenChange={(open) => !open && setEditingCity(null)}>
         <DialogContent className="max-w-6xl w-full h-full md:w-[90vw] md:h-[90vh] p-0 gap-0 border-0">
-          <div className="flex flex-col h-full">
+          <div className="absolute inset-0 flex flex-col">
             <DialogHeader className="px-3 py-2 md:px-6 md:py-4 shrink-0" style={{ borderBottom: '1px solid #575c63' }}>
               <DialogTitle className="text-sm md:text-lg">Edit City</DialogTitle>
               <p className="text-[11px] md:text-sm text-muted-foreground">
@@ -1186,7 +1502,7 @@ export default function CitiesPage() {
 
             {editingCity && (
               <>
-                <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+                <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-auto md:overflow-hidden">
                   {/* Map Preview */}
                   <div className="relative bg-gray-100 dark:bg-gray-900 h-[35vh] md:h-auto md:flex-1 overflow-hidden">
                     {!editMapInitialized && (
@@ -1202,103 +1518,118 @@ export default function CitiesPage() {
                       className="absolute inset-0 w-full h-full"
                     />
 
-                    {/* Connecting Line */}
-                    {editPopupOpen && (
-                      <svg
-                        className="absolute inset-0 pointer-events-none z-20"
-                        style={{ width: "100%", height: "100%" }}
-                      >
-                        <line
-                          ref={editLineRef}
-                          stroke="#8ce3ff"
-                          strokeWidth="1.5"
-                          strokeDasharray="3 2"
-                          opacity="0.7"
-                        />
-                      </svg>
-                    )}
-
                     {/* Popup Card - rendered via Portal inside marker element */}
                     {editPopupOpen && editMarkerElement && createPortal(
                       <div
                         ref={editPopupRef}
                         className="absolute pointer-events-auto popup-enter"
                         style={{
-                          bottom: '50px',
+                          bottom: '20px',
                           left: '50%',
                           transform: 'translateX(-50%)',
-                          width: 'min(85vw, 240px)',
                           zIndex: 9999,
                         }}
                       >
-                        <div className="bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-xl rounded-xl overflow-hidden shadow-2xl border border-white/10">
-                          {/* Image */}
-                          <div className="relative h-24 overflow-hidden">
-                            <Image
-                              src={editingCity?.image_url || "https://images.unsplash.com/photo-1505881502353-a1986add3762?w=800&auto=format&fit=crop"}
-                              alt={editingCity?.name || "City"}
-                              fill
-                              className="object-cover"
-                              unoptimized
-                            />
-                            <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent" />
-
-                            {/* Close Button */}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setEditPopupOpen(false);
-                                // Show the marker label again
-                                if (editMarkerRef.current) {
-                                  const markerEl = editMarkerRef.current.getElement();
-                                  const labelEl = markerEl?.querySelector('.edit-marker-label') as HTMLElement;
-                                  if (labelEl) {
-                                    labelEl.style.display = 'block';
-                                  }
-                                }
-                              }}
-                              className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-slate-900/80 backdrop-blur-sm flex items-center justify-center hover:bg-slate-900 transition-colors border border-white/10"
-                            >
-                              <X className="w-3 h-3 text-white" />
-                            </button>
+                        <div className="relative">
+                          {/* Premium connector - arrow pointing down */}
+                          <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 flex items-center justify-center">
+                            <div className="relative flex items-center justify-center">
+                              {/* Outer glow */}
+                              <div className="absolute w-0 h-0 border-l-[11px] border-l-transparent border-r-[11px] border-r-transparent border-t-[13px]" style={{ borderTopColor: 'rgba(222, 233, 240, 0.3)' }} />
+                              {/* Main arrow */}
+                              <div className="relative w-0 h-0 border-l-[10px] border-l-transparent border-r-[10px] border-r-transparent border-t-[12px]" style={{ borderTopColor: '#DEE9F0', filter: 'drop-shadow(0 2px 4px rgba(222, 233, 240, 0.4))' }} />
+                            </div>
                           </div>
 
-                          {/* Content */}
-                          <div className="p-3 space-y-3">
-                            {/* Location Name */}
-                            <div className="flex items-center gap-1.5">
-                              <MapPin className="w-3 h-3 text-cyan-400 flex-shrink-0" />
-                              <h3 className="text-xs font-semibold text-white">
-                                {editingCity?.name}, Florida
-                              </h3>
+                          <div className="bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-xl rounded-2xl overflow-hidden border border-white/10 w-[290px] shadow-[0_8px_32px_rgba(0,0,0,0.4),0_0_0_1px_rgba(255,255,255,0.05),0_0_60px_rgba(0,135,159,0.15)]">
+                            {/* Image */}
+                            <div className="popup-image relative h-40 overflow-hidden group">
+                              <Image
+                                src={editingCity?.image_url || "https://images.unsplash.com/photo-1505881502353-a1986add3762?w=800&auto=format&fit=crop"}
+                                alt={editingCity?.name || "City"}
+                                fill
+                                className="object-cover transition-transform duration-500 group-hover:scale-105"
+                                unoptimized
+                              />
+                              {/* Multi-layer gradient for better depth */}
+                              <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-slate-900/40 to-transparent" />
+                              <div className="absolute inset-0 bg-gradient-to-br from-transparent via-transparent to-slate-900/20" />
+
+                              {/* Close Button */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditPopupOpen(false);
+                                  // Show the marker label again
+                                  if (editMapRef.current?.getLayer('edit-city-label')) {
+                                    editMapRef.current.setLayoutProperty('edit-city-label', 'visibility', 'visible');
+                                  }
+                                  // Remove highlight marker
+                                  if (editMapRef.current?.getLayer('edit-highlight-marker')) {
+                                    editMapRef.current.removeLayer('edit-highlight-marker');
+                                  }
+                                  // Remove marker element
+                                  if (editMarkerElement) {
+                                    editMarkerElement.remove();
+                                    setEditMarkerElement(null);
+                                    editMarkerElementRef.current = null;
+                                  }
+                                }}
+                                className="absolute top-3 right-3 w-8 h-8 rounded-full bg-slate-900/95 backdrop-blur-md flex items-center justify-center hover:bg-white/10 hover:scale-110 transition-all duration-200 border border-white/20 shadow-lg group"
+                              >
+                                <X className="w-4 h-4 text-white/80 group-hover:text-white transition-colors" />
+                              </button>
                             </div>
 
-                            {/* Add to Preferences Button */}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                // Toggle preference - for now just visual feedback
-                                const checkbox = e.currentTarget.querySelector('.preference-checkbox') as HTMLElement;
-                                if (checkbox) {
-                                  const isChecked = checkbox.dataset.checked === 'true';
-                                  checkbox.dataset.checked = (!isChecked).toString();
-                                  checkbox.innerHTML = !isChecked ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-3 h-3 text-white"><path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clip-rule="evenodd" /></svg>' : '';
-                                  checkbox.style.backgroundColor = !isChecked ? '#0d9488' : 'transparent';
-                                  checkbox.style.borderColor = !isChecked ? '#0d9488' : 'rgba(255, 255, 255, 0.5)';
-                                }
-                              }}
-                              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 hover:bg-white/5"
-                              style={{ backgroundColor: 'rgba(30, 70, 90, 0.5)' }}
-                            >
-                              <div
-                                className="preference-checkbox w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-all duration-200"
-                                data-checked="false"
-                                style={{ border: '2px solid rgba(255, 255, 255, 0.5)' }}
-                              />
-                              <span className="text-xs text-white/80">
-                                Add to preferences
-                              </span>
-                            </button>
+                            {/* Content */}
+                            <div className="popup-content p-4 space-y-3.5">
+                              {/* Location Name */}
+                              <div className="flex items-center gap-2">
+                                <MapPin className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+                                <h3 className="text-sm font-semibold text-white">
+                                  {editingCity?.name}, Florida
+                                </h3>
+                              </div>
+
+                              {/* Divider line */}
+                              <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+
+                              {/* Add to Preferences Button - Visual feedback only */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const checkbox = e.currentTarget.querySelector('.preference-checkbox') as HTMLElement;
+                                  if (checkbox) {
+                                    const isChecked = checkbox.dataset.checked === 'true';
+                                    checkbox.dataset.checked = (!isChecked).toString();
+                                    checkbox.innerHTML = !isChecked ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-3.5 h-3.5 text-white animate-in fade-in zoom-in duration-200"><path fill-rule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clip-rule="evenodd" /></svg>' : '';
+                                    checkbox.style.background = !isChecked ? 'linear-gradient(to bottom right, #06b6d4, #0891b2)' : 'transparent';
+                                    checkbox.style.borderColor = !isChecked ? '#22d3ee' : 'rgba(255, 255, 255, 0.3)';
+                                    checkbox.style.boxShadow = !isChecked ? '0 10px 15px -3px rgba(6, 182, 212, 0.3)' : '';
+                                    const button = e.currentTarget as HTMLElement;
+                                    button.className = !isChecked
+                                      ? 'w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-300 group relative overflow-hidden bg-gradient-to-r from-cyan-600/20 to-cyan-500/20 hover:from-cyan-600/30 hover:to-cyan-500/30 border-2 border-cyan-500/40'
+                                      : 'w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-300 group relative overflow-hidden bg-white/5 hover:bg-white/10 border-2 border-white/10 hover:border-cyan-500/30';
+                                    const text = button.querySelector('.button-text') as HTMLElement;
+                                    if (text) {
+                                      text.textContent = !isChecked ? 'Added to preferences' : 'Add to preferences';
+                                      text.className = !isChecked ? 'button-text text-sm font-medium transition-colors duration-200 text-cyan-100' : 'button-text text-sm font-medium transition-colors duration-200 text-white/80 group-hover:text-white';
+                                    }
+                                  }
+                                }}
+                                className="w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-300 group relative overflow-hidden bg-white/5 hover:bg-white/10 border-2 border-white/10 hover:border-cyan-500/30"
+                              >
+                                <div className="flex items-center gap-3 relative z-10">
+                                  <div
+                                    className="preference-checkbox w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 transition-all duration-300 bg-transparent border-2 border-white/30 group-hover:border-cyan-400/50"
+                                    data-checked="false"
+                                  />
+                                  <span className="button-text text-sm font-medium transition-colors duration-200 text-white/80 group-hover:text-white">
+                                    Add to preferences
+                                  </span>
+                                </div>
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>,
@@ -1307,7 +1638,7 @@ export default function CitiesPage() {
                   </div>
 
                   {/* Form */}
-                  <div className="w-full md:w-80 border-t md:border-t-0 md:border-l overflow-auto p-2.5 md:p-4" style={{ borderColor: '#575c63' }}>
+                  <div className="w-full md:w-80 md:overflow-auto border-t md:border-t-0 md:border-l p-2.5 md:p-4" style={{ borderColor: '#575c63' }}>
                     <div className="space-y-2.5 md:space-y-4">
                       <div>
                         <Label htmlFor="edit-name" className="text-[10px] md:text-xs mb-1">City Name *</Label>

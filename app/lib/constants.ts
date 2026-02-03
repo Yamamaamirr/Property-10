@@ -236,6 +236,31 @@ export const WORLD_BOUNDING_BOX: [number, number][] = [
 ] as const;
 
 /**
+ * USA Map Configuration for State Selector
+ */
+export const USA_MAP_CONFIG = {
+  INITIAL_CENTER: [-98.5795, 39.8283] as [number, number], // USA geographic center
+  INITIAL_ZOOM: 3.2,
+  INITIAL_PITCH: 35,
+  MIN_ZOOM: 0.5,
+  MAX_ZOOM: 10,
+  FLORIDA_SELECT_ZOOM: 6,
+  ANIMATION_DURATION: 1200,
+} as const;
+
+/**
+ * State Colors for State Selector
+ */
+export const STATE_COLORS = {
+  FLORIDA_FILL: '#00d4ff',
+  FLORIDA_OPACITY: 0.5,
+  OTHER_FILL: '#3a5a7a',
+  OTHER_OPACITY: 0.3,
+  HOVER_GLOW: '#5a9fd4',
+  BORDER: '#76c8fe',
+} as const;
+
+/**
  * SVG Templates
  */
 export const SVG_TEMPLATES = {

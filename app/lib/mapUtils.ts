@@ -205,3 +205,49 @@ export function getMapTilerStyleURL(): string {
 
   return `https://api.maptiler.com/maps/${styleId}/style.json?key=${apiKey}`;
 }
+
+/**
+ * Extract states from USA.geojson
+ */
+export function extractUSAStates(usaGeoJSON: GeoJSON.FeatureCollection): GeoJSON.Feature[] {
+  return usaGeoJSON.features || [];
+}
+
+/**
+ * Calculate USA bounds for initial view
+ */
+export function calculateUSABounds(): [number, number, number, number] {
+  return [-125, 24, -66, 50]; // Approximate USA bounds [minLng, minLat, maxLng, maxLat]
+}
+
+/**
+ * Create mask for world minus USA (cookie-cutter approach)
+ */
+export function createWorldMinusUSAMask(usaCoordinates: number[][][] | number[][][][]): GeoJSON.Feature<GeoJSON.Polygon> {
+  // Determine if we have a MultiPolygon or Polygon
+  const isMultiPolygon = Array.isArray(usaCoordinates[0]?.[0]?.[0]);
+
+  let usaRings: number[][][];
+
+  if (isMultiPolygon) {
+    // MultiPolygon: flatten array of polygons and reverse each ring
+    usaRings = (usaCoordinates as number[][][][]).flatMap((polygon) =>
+      polygon.map((ring) => ring.slice().reverse())
+    );
+  } else {
+    // Polygon: reverse each ring
+    usaRings = (usaCoordinates as number[][][]).map((ring) =>
+      ring.slice().reverse()
+    );
+  }
+
+  // Combine world bounding box with reversed USA rings to create holes
+  return {
+    type: 'Feature',
+    properties: {},
+    geometry: {
+      type: 'Polygon',
+      coordinates: [[...WORLD_BOUNDING_BOX], ...usaRings]
+    }
+  };
+}

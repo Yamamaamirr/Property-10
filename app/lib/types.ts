@@ -95,6 +95,9 @@ export interface Region {
   geom: any;
   label_lng: number | null;
   label_lat: number | null;
+  name_2: string | null;
+  label_lng_2: number | null;
+  label_lat_2: number | null;
   created_at: string;
   updated_at: string;
 }

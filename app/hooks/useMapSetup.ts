@@ -485,6 +485,107 @@ export function useMapSetup({ onError }: UseMapSetupProps): UseMapSetupReturn {
                   }
                 });
 
+                // Create point features for second region labels (if they exist)
+                const regionLabelFeatures2 = regionsData
+                  .filter(region => region.geom && region.name_2)
+                  .map(region => {
+                    let center: [number, number];
+
+                    // Use stored label position if available, otherwise offset from first label
+                    if (region.label_lng_2 !== null && region.label_lat_2 !== null) {
+                      center = [region.label_lng_2, region.label_lat_2];
+                    } else if (region.label_lng !== null && region.label_lat !== null) {
+                      // Default: offset from first label
+                      center = [region.label_lng, region.label_lat - 0.1];
+                    } else {
+                      // Calculate default position from geometry and offset
+                      if (region.geom.type === 'Polygon') {
+                        const baseCenter = getPolygonCenter(region.geom.coordinates[0]);
+                        center = [baseCenter[0], baseCenter[1] - 0.1];
+                      } else if (region.geom.type === 'MultiPolygon') {
+                        const polygons = region.geom.coordinates;
+                        let largestPoly = polygons[0][0];
+                        let largestArea = largestPoly.length;
+
+                        polygons.forEach((poly: number[][][]) => {
+                          if (poly[0].length > largestArea) {
+                            largestArea = poly[0].length;
+                            largestPoly = poly[0];
+                          }
+                        });
+
+                        const baseCenter = getPolygonCenter(largestPoly);
+                        center = [baseCenter[0], baseCenter[1] - 0.1];
+                      } else {
+                        return null;
+                      }
+                    }
+
+                    if (!region.name_2) return null;
+
+                    return {
+                      type: 'Feature' as const,
+                      properties: {
+                        name: region.name_2.toUpperCase()
+                      },
+                      geometry: {
+                        type: 'Point' as const,
+                        coordinates: center
+                      }
+                    };
+                  })
+                  .filter(Boolean);
+
+                // Add second region labels layer if there are any
+                if (regionLabelFeatures2.length > 0) {
+                  const regionLabelsSource2 = {
+                    type: 'FeatureCollection' as const,
+                    features: regionLabelFeatures2
+                  };
+
+                  map.current.addLayer({
+                    id: 'regions-labels-2',
+                    type: 'symbol',
+                    source: {
+                      type: 'geojson',
+                      data: regionLabelsSource2 as any
+                    },
+                    layout: {
+                      'text-field': ['get', 'name'],
+                      'text-font': ['Open Sans SemiBold', 'Arial Unicode MS Bold'],
+                      'text-size': [
+                        'interpolate',
+                        ['linear'],
+                        ['zoom'],
+                        5, 10,
+                        7, 12,
+                        9, 12,
+                        11, 11
+                      ],
+                      'text-anchor': 'center',
+                      'text-allow-overlap': false,
+                      'text-letter-spacing': 0.08,
+                      'text-transform': 'uppercase'
+                    },
+                    paint: {
+                      'text-color': '#e8e8e8',
+                      'text-halo-color': 'rgba(0, 0, 0, 0.75)',
+                      'text-halo-width': 2,
+                      'text-halo-blur': 0.8,
+                      'text-opacity': [
+                        'interpolate',
+                        ['linear'],
+                        ['zoom'],
+                        5, 0.85,
+                        6.5, 1.0,
+                        8, 0.6,
+                        9, 0.3,
+                        10, 0
+                      ]
+                    }
+                  });
+                }
+
                 console.log('[MAP] ✓ Added regions layers from database');
 
                 // Add interactive click functionality for regions (hover effects removed)
